@@ -2,101 +2,114 @@
 
 **English** · [한국어](README.ko.md)
 
-Build ABAP objects **headless from source files** via the ADT REST API — no Eclipse, no SAP GUI. One command auto-detects the object's type and name, then creates → locks → PUTs source → activates (and publishes / runs) over plain HTTP(S). **16 object types**, including a full RAP service exposed as a **live OData V4 endpoint**.
+A headless CLI tool to build and activate ABAP objects directly from source files using the ADT REST API—no Eclipse, no SAP GUI required.
+
+With a single command, adt-build automatically detects the object's type and name, then handles the entire lifecycle: Create → Lock → Upload Source → Activate. It can even execute classruns or publish service bindings over HTTP(S). It supports 16 ABAP object types, including everything needed to expose a RAP service as a live OData V4 endpoint.
 
 ```bash
-tools/abap zcl_demo.abap --run     # detects: class ZCL_DEMO → create, activate, run classrun
-tools/abap zi_orders.asddls        # detects: CDS view ZI_ORDERS
-tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS   # OData V4 binding + publish
+tools/abap zcl_demo.abap --run     # Detects: class ZCL_DEMO → creates, activates, and runs it
+tools/abap zi_orders.asddls        # Detects: CDS view ZI_ORDERS
+tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS   # OData V4 binding + auto-publish
 ```
 
-## Why
+## Why adt-build?
 
-The supported way to create and activate ABAP objects is Eclipse ADT (or SAP GUI). That's a wall if you want to
+The standard way to create and activate ABAP objects is via Eclipse ADT or SAP GUI. However, these GUI-based tools become bottlenecks when you want to:
 
-- script object creation in CI/CD,
-- drive ABAP development from an AI agent,
-- work from outside the corporate LAN,
-- do it with zero install (one Python file, standard library only).
+- Automate object creation in CI/CD pipelines.
+- Delegate ABAP development to AI coding agents.
+- Work remotely without VPN access to the corporate LAN.
+- Get things done with zero heavy installations (requires only Python 3 and standard libraries).
 
-ADT is a REST API underneath. This tool speaks it directly and encodes the per-object-type quirks — media types, create payloads, the service-binding publish step, RAP mass-activation — that are otherwise scattered and undocumented. See **[REFERENCE.md](REFERENCE.md)**.
+Under the hood, ADT is just a REST API. This tool interacts with it directly, abstracting away the undocumented quirks and per-object complexities—such as media types, creation payloads, service-binding publish steps, and RAP mass-activations. (For deep technical details, see [REFERENCE.md](REFERENCE.md)).
 
-## Install
+## Installation
 
-Requires **Python 3** (standard library only — nothing to pip install). `bash` + `curl` only for the optional fallback engine.
+You only need Python 3 (it strictly uses the standard library; no `pip install` is required). `bash` and `curl` are only needed if you plan to use the optional fallback script.
 
 ```bash
 git clone <this-repo> && cd adt-build
-cp .env.example .env      # then fill in your system + credentials
+cp .env.example .env      # Fill in your system details and credentials
 ```
 
-`.env`:
+`.env` Configuration:
 
-```
+```ini
 SAP_URL=http://your-host:50000
 SAP_USER=DEVELOPER
 SAP_PASSWORD=...
 SAP_CLIENT=001
 SAP_PACKAGE=ZLOCAL
-SAP_TRANSPORT=            # leave empty for local ($TMP) packages
+SAP_TRANSPORT=            # Leave empty for local ($TMP) packages
 ```
 
-The user needs a **non-initial** SU01 password (log in once via GUI to clear "change on first logon") and ADT active (`SICF` → `/sap/bc/adt`).
+**User Requirements:** The user must have a non-initial SU01 password (log in once via SAP GUI to clear the "change on first logon" prompt).
 
-### Ports vary per system
+**System Requirements:** ADT must be active on the system (transaction `SICF` → `/sap/bc/adt`).
 
-The port in `SAP_URL` isn't fixed — it follows the system's ICM configuration. For instance number `nn`, the common values are:
+### System Port Configuration
+
+The port in `SAP_URL` is not fixed; it depends on your system's ICM configuration. If your instance number is `nn`, common values are:
 
 - HTTP: `50000` (`5nn00`) or `8000` (`80nn`)
 - HTTPS: `50001` (`5nn01`) or `44300` (`443nn`)
 
-Find yours in transaction `SMICM` → Goto → Services, or the instance profile's `icm/server_port_*`. Over the internet, prefer the HTTPS port in `SAP_URL` (with `--insecure` for self-signed certs).
+You can find your exact port in transaction `SMICM` → Goto → Services, or by checking the `icm/server_port_*` parameters in the instance profile. When connecting over the internet, prefer HTTPS (use the `--insecure` flag if your dev system uses self-signed certificates).
 
 ## Usage
 
-`tools/abap <file>` infers the type from the file extension + first source line, and the name from the declaration:
+Simply run `tools/abap <file>`. The tool infers the object type from the file extension and the first line of code, and extracts the object name directly from the declaration.
 
-| You write | Detected as |
+| You write (Source code) | Extension | Detected As |
+|---|---|---|
+| `CLASS zcl_x DEFINITION ...` | `.abap` | Class `ZCL_X` |
+| `INTERFACE zif_x ...` | `.abap` | Interface `ZIF_X` |
+| `REPORT zr_x.` | `.abap` | Program `ZR_X` |
+| `define view entity ZI_X ...` | `.asddls` | CDS View `ZI_X` |
+| `define structure zs_x ...` | `.asddls` | DDIC Structure `ZS_X` |
+| `define behavior for ZI_X ...` | `.asbdef` | Behavior Definition |
+| `define service ZUI_X { ... }` | `.assrvd` | Service Definition |
+| `<doma:domain ...>` | `.xml` | Domain |
+
+**Useful Flags:**
+
+- `--run`: Execute a class via classrun after activation.
+- `--group ZFG`: Specify the function group for a function module.
+- `--srvd ZX`: Specify the service definition for a service binding.
+- `--type` / `--name`: Override automatic detection, or use for objects without source files.
+- `--src`: Explicitly define the source file to upload.
+- `--host` / `--user` / `--client` / `--package` / `--transport`: Override variables defined in `.env`.
+- `--insecure`: Skip TLS certificate verification (for dev systems with self-signed certs).
+
+### Supported Object Types (16)
+
+| Category | Supported Objects |
 |---|---|
-| `CLASS zcl_x DEFINITION ...` | class `ZCL_X` |
-| `INTERFACE zif_x ...` | interface |
-| `REPORT zr_x.` | program |
-| `define view entity ZI_X ...` (`.asddls`) | CDS view |
-| `define structure zs_x` (`.asddls`) | DDIC structure |
-| `define behavior for ZI_X ...` (`.asbdef`) | behavior definition |
-| `define service ZUI_X { ... }` (`.assrvd`) | service definition |
-| `<doma:domain ...>` (`.xml`) | domain |
-
-Flags: `--run` (run a class via classrun), `--group ZFG` (function module's group), `--srvd ZX` (binding's service definition), `--type` / `--name` (override detection, or no-source types), `--src` (explicit source file), `--host` / `--user` / `--client` / `--package` / `--transport` (override `.env`), `--insecure` (skip TLS cert verification — self-signed dev systems only).
-
-### Supported object types (16)
-
-| Cluster | Types |
-|---|---|
-| OO / procedural | class, interface, program, function group, function module |
-| DDIC | table, structure, data element, domain, type group |
-| CDS / access control | CDS view, DCL access control |
+| OO / Procedural | Class, Interface, Program, Function Group, Function Module |
+| DDIC | Table, Structure, Data Element, Domain, Type Group |
+| CDS / Access Control | CDS View, DCL Access Control |
 | Transformation | XSLT |
-| RAP | behavior definition, service definition, service binding → OData V4 |
+| RAP | Behavior Definition, Service Definition, Service Binding (OData V4) |
 
-### CDS view → live OData V4 (end to end)
+### Example: CDS View to Live OData V4 (End-to-End)
 
 ```bash
-tools/abap zi_orders.asddls                                    # CDS view
-tools/abap zui_orders.assrvd                                   # service definition exposing it
-tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS  # binding + auto-publish
-# → GET /sap/opu/odata4/sap/zui_orders_o4/srvd/sap/zui_orders/0001/Orders  returns live JSON
+tools/abap zi_orders.asddls                                    # 1. Create CDS view
+tools/abap zui_orders.assrvd                                   # 2. Create Service definition
+tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS  # 3. Create Binding + Auto-publish
+
+# → Success! GET /sap/opu/odata4/sap/zui_orders_o4/srvd/sap/zui_orders/0001/Orders now returns live JSON
 ```
 
-## Discover, don't assume
+## No Guesswork: Explicit Configuration
 
-System-specific values vary per system (port, client, package, transport). The tool never hardcodes or silently defaults them:
+System-specific values (port, client, package, transport) vary wildly. adt-build never hardcodes these or relies on silent fallbacks:
 
-- **port** is part of `SAP_URL` — yours, whatever it is.
-- **client** is omitted unless you set `SAP_CLIENT`; the server then uses your logon default.
-- **package / transport** are validated against the system, not guessed.
+- The port is explicitly taken from your `SAP_URL`.
+- The client is omitted from the header unless `SAP_CLIENT` is set (forcing the server to use your logon default).
+- Package and transport values are strictly validated against the live system, never guessed.
 
-`abap probe` shows exactly what the tool will talk to before you build:
+Use `abap probe` to see exactly how the tool will interact with the system before executing a build:
 
 ```
 $ abap probe
@@ -109,41 +122,37 @@ package  : ZLOCAL  exists (type=DEVC/K, responsible=DEVELOPER, softwareComponent
 transport: ABCK900123  [Modifiable] owner=DEVELOPER
 ```
 
-**Package and transport decide where and how your changes land** — and a value sitting in `.env` is a *standing choice*, not necessarily this task's intent. So the tool requires them explicitly (no default — it never invents a target), and for AI-driven use the agent should **confirm scope up front, before creating anything**:
+Because `.env` variables are standing configurations, they might not fit your current task. For AI-driven workflows, the agent should always confirm the scope upfront (e.g., Which package? Local or transportable?), use `probe` to verify the live state, and then execute the build.
 
-> which package? · local or transportable? · broad access or limited?
+## How It Works
 
-Then `abap probe` to surface the live state, and build with explicit values. **Probe, confirm, then write** — never assume the standing config fits a new task.
+For every object, the tool executes the following lifecycle:
 
-## How it works
+Fetch CSRF token → `POST` create (stateful session) → `LOCK` → `PUT` source (or object XML) → `UNLOCK` → `POST` activate in a fresh session (since the lock/PUT rotates the token). Service bindings have an extra publish step, and classes optionally execute.
 
-Per object: fetch a CSRF token → `POST` create (stateful session) → `LOCK` → `PUT` source (or object XML) → `UNLOCK` → `POST` activate in a **fresh session** (lock/PUT rotate the token). Service bindings additionally publish; classes optionally run. Full per-type endpoints, media types, and gotchas: **[REFERENCE.md](REFERENCE.md)**.
+There are two implementations that follow this exact flow:
 
-Two implementations, identical flow:
+- **`tools/abap` (Primary):** Pure Python (standard library only). Features auto-detection and a robust type registry. Runs seamlessly on macOS, Linux, and Windows (use `py tools\abap ...` or the bundled `abap.cmd`). *Verified on macOS/Linux; Windows is supported by design but not yet tested on a Windows host.*
+- **`tools/build.sh` (Fallback):** A Bash + Curl script that serves as a transparent reference implementation. (Unix only; use WSL or Git Bash on Windows).
 
-- **`tools/abap`** — Python, primary. Auto-detection + a type registry, standard library only.
-- **`tools/build.sh`** — bash/curl, the transparent reference & fallback: `build.sh <type> <NAME> <src>`.
+## Use Cases & Integrations
 
-**Platforms.** `tools/abap` is pure Python standard library (no `pip`, no `curl`, no platform-specific calls) — it runs on macOS, Linux, and Windows. On Windows run `py tools\abap ...`, or use the bundled `abap.cmd` so `abap ...` works (it falls back to `python` if the `py` launcher is absent). `tools/build.sh` is Unix only (bash + curl — use WSL or Git Bash on Windows). Verified on macOS; Windows is supported by design (stdlib-only) but not yet tested on a Windows host.
+adt-build intentionally focuses on one job: the build step (create, activate, publish). It works great standalone, but shines in automated workflows:
 
-## Compared to other tools
+- **AI Agents (e.g., Claude Code):** An agent can write the source code, invoke the CLI to build it, and read the results in a continuous loop.
+- **Coupling with MCP Servers:** While `abap probe` and `--run` handle basic reading and execution, you can pair adt-build with a community ADT MCP server (like VSP) for an interactive read/edit/test workflow. adt-build handles the heavy lifting of building, while the MCP handles inspection.
+- **MCP Fallback:** Even if an MCP server is blocked or unavailable, this raw REST CLI continues to work reliably.
 
-- **abapGit** — git-based serialization/transport of *existing* objects. This builds objects *from source files* via ADT REST; a different job.
-- **SAP's official ADT-for-VS-Code MCP** (GA 2026) — ABAP Cloud only. This works against on-prem / any ADT-enabled system.
-- **Community ADT MCP servers** — wrap the ADT API for an agent. This is a dependency-free CLI you can drop straight into a script or pipeline.
+## Compared to Other Tools
 
-## Use it alongside
-
-adt-build owns the **build** step — create, activate, publish. It works standalone, but a real workflow usually wires it up like this:
-
-- An **AI agent** (e.g. Claude Code) calls the CLI to run builds: write source → `tools/abap` → read the result, in a loop.
-- For **read / inspect / run**, `abap probe` (system, package, transport) and `--run` (classrun) already cover a lot. To interactively read, edit, and unit-test objects, pair it with an **ADT MCP server** (community ADT MCPs, VSP, …) — adt-build builds, the MCP handles read/edit/test.
-- The raw-REST builder keeps working even when an MCP is blocked, so it doubles as an **MCP fallback**.
+- **abapGit:** Designed for Git-based serialization and transport of existing objects. adt-build focuses on headless creation from local source files via REST.
+- **SAP's ADT-for-VS-Code MCP (GA 2026):** Restricted to ABAP Cloud environments. adt-build works against on-premise systems and any ADT-enabled environment.
+- **Community ADT MCP Servers:** These wrap the ADT API specifically for AI agents. adt-build is a dependency-free CLI built to be dropped directly into scripts or pipelines.
 
 ## Security
 
-Plain HTTP sends your password in cleartext. Prefer `https://` or an SSH tunnel / VPN, especially over the internet. Credentials live only in `.env`, which is gitignored — never commit it.
+Standard HTTP transmits passwords in cleartext. Always prefer HTTPS or route traffic through an SSH tunnel / VPN, especially when working over the internet. Keep your credentials securely in `.env` (which is included in `.gitignore`). Never commit your `.env` file.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — See the [LICENSE](LICENSE) file for details.

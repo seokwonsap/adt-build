@@ -2,101 +2,114 @@
 
 [English](README.md) · **한국어**
 
-Eclipse도 SAP GUI도 없이 **소스 파일 하나로 ABAP 객체를 만들어 활성화**합니다. ADT REST API를 직접 두드려서, 명령 한 줄이면 타입과 이름을 알아서 파악하고 생성·잠금·소스 업로드·활성화(필요하면 publish나 실행)까지 끝냅니다. 객체 **16종**을 지원하고, RAP 서비스를 **바로 호출되는 OData V4**로 띄우는 것까지 됩니다.
+Eclipse나 SAP GUI 없이, 소스 파일 하나만으로 ABAP 객체를 생성하고 활성화할 수 있는 도구입니다. ADT REST API를 직접 호출하기 때문에 명령어 한 줄이면 객체 타입과 이름을 자동으로 파악합니다. 생성, 잠금(Lock), 소스 업로드, 활성화, 그리고 필요한 경우 Publish나 실행까지 한 번에 처리합니다.
+
+총 16종의 ABAP 객체를 지원하며, RAP 서비스를 즉시 호출 가능한 OData V4로 배포하는 작업도 지원합니다.
 
 ```bash
-tools/abap zcl_demo.abap --run     # class ZCL_DEMO 로 인식 → 생성·활성화·classrun 실행
-tools/abap zi_orders.asddls        # CDS view ZI_ORDERS 로 인식
-tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS   # OData V4 바인딩 + publish
+tools/abap zcl_demo.abap --run     # class ZCL_DEMO로 인식 → 생성·활성화·classrun 실행
+tools/abap zi_orders.asddls        # CDS view ZI_ORDERS로 인식
+tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS   # OData V4 바인딩 + 자동 publish
 ```
 
-## 왜 만들었나
+## 만든 이유
 
-ABAP 객체를 만들고 활성화하는 정식 경로는 Eclipse ADT, 아니면 SAP GUI입니다. 그런데 이게 다음 같은 상황에선 발목을 잡습니다.
+보통 ABAP 객체 생성 및 활성화는 Eclipse ADT나 SAP GUI를 통해 이루어집니다. 하지만 다음과 같은 상황에서는 이런 방식이 꽤 번거롭습니다.
 
-- CI/CD에서 객체 생성을 스크립트로 돌리고 싶을 때
-- AI 에이전트한테 ABAP 개발을 맡기고 싶을 때
-- 사내망 밖에서 시스템에 붙어야 할 때
-- 아무것도 설치하기 싫을 때 (Python 파일 하나, 표준 라이브러리만)
+- CI/CD 파이프라인에서 객체 생성을 자동화(스크립트)하고 싶을 때
+- AI 에이전트에게 ABAP 개발 작업을 위임할 때
+- 사내망 외부에서 시스템에 접근해야 할 때
+- 무거운 프로그램 설치 없이 가볍게 작업하고 싶을 때 (Python 표준 라이브러리만 사용)
 
-ADT는 속을 보면 결국 REST API입니다. 이 도구는 그걸 직접 호출하고, 타입마다 제각각인 까다로운 부분(미디어 타입, 생성 페이로드, 서비스 바인딩 publish, RAP mass-activation)을 미리 처리해둡니다. 보통은 여기저기 흩어져 있고 문서도 변변치 않은 것들입니다. 자세한 내용은 **[REFERENCE.md](REFERENCE.md)** 에 정리해뒀습니다.
+ADT의 내부 동작은 결국 REST API입니다. adt-build는 이 API를 직접 호출하여 미디어 타입 처리, 생성 페이로드 구성, 서비스 바인딩 Publish, RAP 대량 활성화(Mass-activation) 등 타입별로 까다롭고 문서화가 부족한 작업들을 대신 처리해 줍니다. 상세한 API 스펙과 주의사항은 [REFERENCE.md](REFERENCE.md)에 정리해 두었습니다.
 
-## 설치
+## 설치 방법
 
-필요한 건 **Python 3** 하나입니다 (표준 라이브러리만 쓰니 pip 설치가 없습니다). bash와 curl은 폴백 엔진(`build.sh`)을 쓸 때만 필요합니다.
+별도의 패키지 설치(pip) 없이 Python 3만 있으면 됩니다. (bash와 curl은 폴백 엔진인 `build.sh`를 사용할 때만 필요합니다.)
 
 ```bash
 git clone <this-repo> && cd adt-build
-cp .env.example .env      # 그리고 본인 시스템 정보를 채웁니다
+cp .env.example .env      # 시스템 환경에 맞게 값을 수정합니다.
 ```
 
-`.env`:
+`.env` 설정 예시:
 
-```
+```ini
 SAP_URL=http://your-host:50000
 SAP_USER=DEVELOPER
 SAP_PASSWORD=...
 SAP_CLIENT=001
 SAP_PACKAGE=ZLOCAL
-SAP_TRANSPORT=            # 로컬($TMP) 패키지면 비웁니다
+SAP_TRANSPORT=            # 로컬($TMP) 패키지인 경우 비워둡니다.
 ```
 
-계정은 **초기 비밀번호가 풀린** SU01 사용자여야 합니다 (GUI로 한 번 로그인해서 "최초 로그온 시 변경" 상태를 없애둡니다). 그리고 `SICF`에서 `/sap/bc/adt` 가 켜져 있어야 합니다.
+**계정 조건:** 초기 비밀번호가 변경 완료된 SU01 사용자여야 합니다. (GUI로 한 번 로그인하여 "최초 로그온 시 변경" 상태를 해제해 주세요.)
 
-### 포트는 시스템마다 다릅니다
+**시스템 조건:** 트랜잭션 `SICF`에서 `/sap/bc/adt` 노드가 활성화되어 있어야 합니다.
 
-`SAP_URL`의 포트는 정해진 값이 아니라 그 시스템의 ICM 설정을 따릅니다. 인스턴스 번호를 `nn`이라 하면 흔한 값은 이렇습니다.
+### 시스템 포트 설정
+
+`SAP_URL`에 입력할 포트는 고정된 값이 아니라 접속할 시스템의 ICM 설정을 따릅니다. 인스턴스 번호가 `nn`일 경우, 일반적으로 다음 값을 사용합니다.
 
 - HTTP: `50000` (= `5nn00`) 또는 `8000` (= `80nn`)
 - HTTPS: `50001` (= `5nn01`) 또는 `44300` (= `443nn`)
 
-본인 시스템 값은 트랜잭션 `SMICM` → Goto → Services 에서 보거나, 인스턴스 프로파일의 `icm/server_port_*` 파라미터로 확인합니다. 인터넷을 넘어 다닐 거라면 평문 HTTP 대신 HTTPS 포트를 `SAP_URL`에 넣으세요 (self-signed 인증서면 `--insecure`).
+정확한 포트는 트랜잭션 `SMICM` → Goto → Services에서 확인하거나, 인스턴스 프로파일의 `icm/server_port_*` 파라미터에서 조회할 수 있습니다. 인터넷 망을 거쳐 접속한다면 평문 HTTP 대신 HTTPS 포트를 사용하세요. (Self-signed 인증서를 사용하는 개발 시스템이라면 `--insecure` 플래그를 추가하면 됩니다.)
 
-## 사용법
+## 사용 방법
 
-`tools/abap <파일>` 은 확장자와 첫 소스 줄로 타입을 알아내고, 선언부에서 이름을 뽑아냅니다.
+`tools/abap <파일명>` 형식으로 실행하면, 파일 확장자와 소스의 첫 줄을 분석해 객체 타입을 알아내고 선언부에서 이름을 자동으로 추출합니다.
 
-| 이렇게 쓰면 | 이렇게 인식 |
+| 소스 코드 (예시) | 파일 확장자 | 인식 결과 |
+|---|---|---|
+| `CLASS zcl_x DEFINITION ...` | `.abap` | 클래스 `ZCL_X` |
+| `INTERFACE zif_x ...` | `.abap` | 인터페이스 `ZIF_X` |
+| `REPORT zr_x.` | `.abap` | 프로그램 `ZR_X` |
+| `define view entity ZI_X ...` | `.asddls` | CDS 뷰 `ZI_X` |
+| `define structure zs_x ...` | `.asddls` | DDIC 구조 `ZS_X` |
+| `define behavior for ZI_X ...` | `.asbdef` | Behavior 정의 |
+| `define service ZUI_X { ... }` | `.assrvd` | 서비스 정의 |
+| `<doma:domain ...>` | `.xml` | 도메인 |
+
+**주요 플래그:**
+
+- `--run`: 클래스를 classrun으로 실행합니다.
+- `--group ZFG`: 함수 모듈이 속할 함수 그룹을 지정합니다.
+- `--srvd ZX`: 서비스 바인딩 생성 시 사용할 서비스 정의를 명시합니다.
+- `--type` / `--name`: 소스 코드에서 추론하는 대신 직접 객체 타입과 이름을 지정합니다. (소스가 없는 타입 생성 시 유용)
+- `--src`: 업로드할 소스 파일을 명시합니다.
+- `--host` / `--user` / `--client` / `--package` / `--transport`: `.env` 파일의 설정을 덮어씁니다.
+- `--insecure`: TLS 인증서 검증을 생략합니다. (Self-signed 인증서를 쓰는 개발 환경 전용)
+
+### 지원하는 객체 유형 (총 16종)
+
+| 분류 | 지원 객체 |
 |---|---|
-| `CLASS zcl_x DEFINITION ...` | 클래스 `ZCL_X` |
-| `INTERFACE zif_x ...` | 인터페이스 |
-| `REPORT zr_x.` | 프로그램 |
-| `define view entity ZI_X ...` (`.asddls`) | CDS 뷰 |
-| `define structure zs_x` (`.asddls`) | DDIC 구조 |
-| `define behavior for ZI_X ...` (`.asbdef`) | behavior 정의 |
-| `define service ZUI_X { ... }` (`.assrvd`) | 서비스 정의 |
-| `<doma:domain ...>` (`.xml`) | 도메인 |
+| OO / 절차형 | 클래스, 인터페이스, 프로그램, 함수 그룹, 함수 모듈 |
+| DDIC | 테이블, 구조, 데이터 요소, 도메인, 타입 그룹 |
+| CDS / 권한 | CDS 뷰, DCL 접근 제어 |
+| 변환(Transformation) | XSLT |
+| RAP | Behavior 정의, 서비스 정의, 서비스 바인딩 (OData V4) |
 
-플래그: `--run`(클래스를 classrun으로 실행), `--group ZFG`(함수모듈의 그룹), `--srvd ZX`(바인딩의 서비스 정의), `--type` / `--name`(추론 대신 직접 지정, 또는 소스 없는 타입), `--src`(소스 파일 명시), `--host` / `--user` / `--client` / `--package` / `--transport`(`.env` 덮어쓰기), `--insecure`(TLS 인증서 검증 생략 — self-signed 개발 시스템 전용).
-
-### 지원 객체 16종
-
-| 묶음 | 타입 |
-|---|---|
-| OO / 절차형 | 클래스, 인터페이스, 프로그램, 함수그룹, 함수모듈 |
-| DDIC | 테이블, 구조, 데이터요소, 도메인, 타입그룹 |
-| CDS / 접근제어 | CDS 뷰, DCL 접근제어 |
-| 변환 | XSLT |
-| RAP | behavior 정의, 서비스 정의, 서비스 바인딩 → OData V4 |
-
-### CDS 뷰 하나를 OData V4로 (처음부터 끝까지)
+### 예시: CDS 뷰에서 OData V4까지 한 번에 배포하기
 
 ```bash
-tools/abap zi_orders.asddls                                    # CDS 뷰
-tools/abap zui_orders.assrvd                                   # 그걸 노출하는 서비스 정의
-tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS  # 바인딩 + 자동 publish
-# → GET /sap/opu/odata4/sap/zui_orders_o4/srvd/sap/zui_orders/0001/Orders  가 라이브 JSON 반환
+tools/abap zi_orders.asddls                                    # 1. CDS 뷰 생성
+tools/abap zui_orders.assrvd                                   # 2. 서비스 정의 생성
+tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS  # 3. 바인딩 생성 및 자동 publish
+
+# 결과: GET /sap/opu/odata4/sap/zui_orders_o4/srvd/sap/zui_orders/0001/Orders 경로로 JSON 응답 확인 가능
 ```
 
-## 추측하지 않고 확인합니다
+## 환경값 임의 추측 배제 (No Guessing)
 
-포트·client·패키지·트랜스포트처럼 시스템마다 다른 값을, 이 도구는 코드에 박아넣거나 슬쩍 기본값으로 때우지 않습니다.
+이 도구는 포트, Client, 패키지, 트랜스포트(TR)처럼 시스템마다 다른 중요 설정값을 코드에 하드코딩하거나 임의의 기본값으로 때우지 않습니다.
 
-- **포트**는 `SAP_URL` 안에 있습니다. 본인 값 그대로 들어갑니다.
-- **client**는 `SAP_CLIENT`를 안 주면 아예 빼고 보냅니다. 그러면 서버가 로그온 기본 client를 씁니다.
-- **패키지·트랜스포트**는 추측 대신 시스템에 직접 물어 확인합니다.
+- 포트는 `SAP_URL`에 명시된 값을 그대로 사용합니다.
+- `SAP_CLIENT`를 생략하면 헤더에서 완전히 제외하여, 서버의 로그온 기본 Client를 사용하도록 합니다.
+- 패키지와 트랜스포트는 추측하는 대신 시스템에 직접 쿼리하여 검증합니다.
 
-빌드 전에 `abap probe` 로 도구가 실제로 무엇과 통신할지 미리 볼 수 있습니다.
+작업을 시작하기 전 `abap probe` 명령어를 사용하면, 도구가 시스템과 어떻게 통신할지 미리 점검할 수 있습니다.
 
 ```
 $ abap probe
@@ -109,41 +122,38 @@ package  : ZLOCAL  exists (type=DEVC/K, responsible=DEVELOPER, softwareComponent
 transport: ABCK900123  [Modifiable] owner=DEVELOPER
 ```
 
-**패키지와 트랜스포트는 내 변경이 어디에, 어떤 방식으로 떨어질지를 정합니다.** `.env`에 적어둔 값도 결국 미리 정해둔 선택이지, 지금 이 작업에 맞다는 보장은 아닙니다. 그래서 도구는 이 값을 꼭 명시하게 하고(기본값 없음, 알아서 만들어내지 않습니다), AI로 돌릴 땐 에이전트가 **뭘 만들기 전에 범위부터 합의**하는 게 좋습니다.
+패키지와 트랜스포트는 내 코드가 어디에, 어떤 방식으로 저장될지를 결정하는 핵심 정보입니다. `.env`에 설정된 값이라도 현재 작업에 항상 적절하다는 보장은 없습니다. 따라서 AI 에이전트와 연동할 때는 본격적인 생성 작업 전에 어느 패키지에 만들 것인지, 로컬 전용인지 이송(Transport)할 것인지 합의 과정을 거치는 것이 좋습니다. `abap probe`로 현재 상태를 확인하고 명시적으로 빌드를 진행하세요.
 
-> 어느 패키지에? · 로컬인가 이송 대상인가? · 권한은 어디까지?
+## 작동 원리
 
-그다음 `abap probe`로 현재 상태를 보여주고, 명시한 값으로 빌드합니다. **확인하고, 합의하고, 그때 씁니다.** 정해둔 설정이 새 작업에도 맞겠거니 하고 넘기지 않습니다.
+하나의 객체를 처리할 때 다음의 워크플로우를 거칩니다.
 
-## 동작 방식
+CSRF 토큰 발급 → `POST` 생성 (Stateful 세션) → `LOCK` → 소스(또는 XML) `PUT` → `UNLOCK` → 새로운 세션에서 `POST` 활성화 (LOCK/PUT 작업이 기존 토큰을 무효화하기 때문입니다).
 
-객체 하나마다: CSRF 토큰 받기 → `POST` 생성(stateful 세션) → `LOCK` → 소스(또는 객체 XML) `PUT` → `UNLOCK` → **새 세션**에서 `POST` 활성화(lock/PUT이 토큰을 회전시키기 때문입니다). 서비스 바인딩은 publish가 더 붙고, 클래스는 선택적으로 실행됩니다. 타입별 엔드포인트·미디어 타입·함정은 **[REFERENCE.md](REFERENCE.md)** 에 있습니다.
+서비스 바인딩의 경우 Publish 단계가 추가되며, 클래스는 옵션에 따라 실행(classrun)됩니다. 각 타입별 정확한 엔드포인트와 미디어 타입은 [REFERENCE.md](REFERENCE.md)에 정리되어 있습니다.
 
-구현은 둘인데 흐름은 똑같습니다.
+구현체는 두 가지로 나뉩니다.
 
-- **`tools/abap`** — Python, 주력. 자동 인식 + 타입 레지스트리, 표준 라이브러리만 씁니다.
-- **`tools/build.sh`** — bash/curl, 흐름을 그대로 보여주는 레퍼런스 겸 폴백: `build.sh <type> <NAME> <src>`.
+- **`tools/abap` (주력):** 순수 Python 표준 라이브러리 기반. 자동 인식 및 타입 레지스트리를 제공합니다. pip나 curl 같은 외부 의존성 없이 macOS, Linux, Windows 모두에서 동작합니다. (Windows에서는 `py tools\abap ...` 또는 동봉된 `abap.cmd` 활용) *macOS·Linux에서 검증했고, Windows는 설계상 지원하나 실제 Windows 호스트에서는 아직 검증하지 못했습니다.*
+- **`tools/build.sh` (폴백):** Bash와 Curl 기반. API 호출 흐름을 투명하게 보여주는 레퍼런스 스크립트입니다. (Unix 환경 전용, Windows는 WSL 또는 Git Bash 필요)
 
-**플랫폼.** `tools/abap`은 순수 Python 표준 라이브러리입니다 (pip 없음, curl 없음, 플랫폼 종속 호출 없음). macOS·Linux·Windows에서 돌아갑니다. Windows에서는 `py tools\abap ...` 로 실행하거나, 같이 들어있는 `abap.cmd`를 쓰면 `abap ...` 로 됩니다 (`py` 런처가 없으면 `python`으로 폴백). `tools/build.sh`는 Unix 전용입니다 (bash + curl, Windows면 WSL이나 Git Bash). macOS에서 검증했고, Windows는 설계상 지원되지만(표준 라이브러리만 쓰므로) 실제 Windows 호스트에서는 아직 테스트하지 못했습니다.
+## 다른 도구와 함께 활용하기 (Use Cases)
 
-## 뭐랑 같이 쓰나
+이 도구의 핵심 역할은 객체의 생성·활성화·배포(create·activate·publish)입니다. 단독으로도 강력하지만, 다른 도구와 결합하면 시너지가 납니다.
 
-이 도구가 맡는 건 **객체를 만들고 활성화하는 부분**입니다 (create·activate·publish). 단독으로도 돌아가지만, 실제 작업은 보통 이렇게 엮습니다.
+- **AI 에이전트 (예: Claude Code):** 에이전트가 코드를 작성한 후 CLI를 호출해 빌드하고 그 결과를 다시 피드백받는 루프를 구축할 수 있습니다.
+- **ADT MCP 서버와의 결합:** adt-build는 빌드를 전담하고, 읽기/조회/대화형 수정은 커뮤니티 ADT MCP 서버(VSP 등)에 맡기면 역할을 깔끔하게 분리할 수 있습니다. 시스템 제약으로 MCP 사용이 막힌 환경에서는 이 raw-REST 빌더가 훌륭한 대안(Fallback)이 됩니다.
 
-- **AI 에이전트(예: Claude Code)** 가 이 CLI를 호출해 빌드를 돌립니다. 소스를 쓰고 → `tools/abap`으로 올리고 → 결과를 읽는 루프.
-- **읽기·조회·실행**은 `abap probe`(시스템·패키지·트랜스포트 확인)와 `--run`(classrun)으로 어느 정도 됩니다. 대화형으로 객체를 읽고 고치고 테스트까지 하려면 **ADT MCP 서버**(커뮤니티 ADT MCP, VSP 등)를 같이 붙이면 편합니다. adt-build는 빌드, MCP는 read/edit/test 로 역할을 나누는 식입니다.
-- MCP가 막히는 상황에서도 이 raw-REST 빌더는 그대로 도므로, **MCP의 폴백**으로도 씁니다.
+## 기존 도구와의 차이점
 
-## 다른 도구와 비교
-
-- **abapGit** — *기존* 객체를 git으로 직렬화·이송합니다. 이 도구는 *소스 파일에서* ADT REST로 객체를 빌드하니 하는 일이 다릅니다.
-- **SAP 공식 ADT-for-VS-Code MCP** (2026 GA) — ABAP Cloud 전용입니다. 이 도구는 온프렘 등 ADT가 켜진 어떤 시스템에서도 됩니다.
-- **커뮤니티 ADT MCP 서버들** — 에이전트용으로 ADT API를 감쌉니다. 이 도구는 스크립트나 파이프라인에 바로 넣을 수 있는, 의존성 없는 CLI입니다.
+- **abapGit:** 기존에 존재하는 객체를 Git으로 직렬화하고 이송하는 목적입니다. adt-build는 로컬 소스 파일을 ADT REST를 통해 직접 시스템에 '빌드'하는 도구로 역할이 다릅니다.
+- **SAP 공식 ADT-for-VS-Code MCP (2026 GA):** ABAP Cloud 환경 전용입니다. 반면 이 도구는 온프레미스를 포함해 ADT가 활성화된 모든 시스템에서 동작합니다.
+- **기타 커뮤니티 ADT MCP 서버:** 에이전트와의 상호작용을 위해 API를 래핑합니다. adt-build는 별도의 의존성 없이 CI/CD 파이프라인이나 스크립트에 즉시 투입할 수 있는 가벼운 CLI입니다.
 
 ## 보안
 
-평문 HTTP는 비밀번호를 그대로 흘려보냅니다. 특히 인터넷을 넘어갈 때는 `https://` 나 SSH 터널/VPN을 쓰세요. 인증정보는 `.env`에만 두고, 그건 gitignore돼 있습니다. 절대 커밋하지 마세요.
+평문 HTTP 환경에서는 인증 정보가 암호화되지 않고 전송됩니다. 특히 외부 인터넷 망을 거칠 때는 반드시 HTTPS를 사용하거나 SSH 터널링 / VPN 환경에서 사용하세요. 계정 정보는 `.env`에만 저장하며, 이 파일은 `.gitignore`에 등록되어 있습니다. 절대 `.env` 파일을 저장소에 커밋하지 마세요.
 
 ## 라이선스
 
-MIT — [LICENSE](LICENSE) 참고.
+MIT 라이선스를 따릅니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
