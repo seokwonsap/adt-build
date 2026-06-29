@@ -86,7 +86,7 @@ TYPES = {
                 cre=_cre_fm, name_re=r'\bFUNCTION\s+(\w+)'),
  'cds':    dict(coll='/sap/bc/adt/ddic/ddl/sources', atype='DDLS/DF', media='application/vnd.sap.adt.ddlSource+xml',
                 cre=_cre('ddl:ddlSource','xmlns:ddl="http://www.sap.com/adt/ddic/ddlsources"','DDLS/DF'),
-                name_re=r'define\s+(?:root\s+)?(?:view\s+entity|view|abstract\s+entity|hierarchy)\s+(\w+)'),
+                name_re=r'define\s+(?:root\s+)?(?:view\s+entity|view|abstract\s+entity|hierarchy|table\s+function)\s+(\w+)'),
  'dcl':    dict(coll='/sap/bc/adt/acm/dcl/sources', atype='DCLS/DL', media='application/vnd.sap.adt.dclSource+xml',
                 cre=_cre('dcl:dclSource','xmlns:dcl="http://www.sap.com/adt/acm/dclsources"','DCLS/DL'), name_re=r'define\s+role\s+(\w+)'),
  'tabl':   dict(coll='/sap/bc/adt/ddic/tables', atype='TABL/DT', media='application/vnd.sap.adt.tables.v2+xml',
@@ -120,6 +120,7 @@ def detect(path, txt):
     if ext == '.asddls' or 'DEFINE ' in head:
         if 'DEFINE STRUCTURE' in head: return 'stru'
         if 'DEFINE TABLE TYPE' in head: return None   # TTYP not supported yet (don't mis-detect as 'tabl')
+        if 'DEFINE TABLE FUNCTION' in head: return 'cds'   # AMDP table function rides the DDLS endpoint
         if 'DEFINE TABLE' in head: return 'tabl'
         if 'DEFINE SERVICE' in head: return 'srvd'
         if 'DEFINE ROLE' in head: return 'dcl'
