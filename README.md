@@ -80,6 +80,7 @@ Simply run `tools/abap <file>`. The tool infers the object type from the file ex
 - `--src`: Explicitly define the source file to upload.
 - `--host` / `--user` / `--client` / `--package` / `--transport`: Override variables defined in `.env`.
 - `--insecure`: Skip TLS certificate verification (for dev systems with self-signed certs).
+- `--verbose`: Dump the raw server response body on errors (helps debug non-XML error responses).
 
 ### Supported Object Types (16)
 

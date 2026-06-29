@@ -28,14 +28,17 @@ def load_env():
             line = line.strip()
             if line and not line.startswith('#') and '=' in line:
                 k, v = line.split('=', 1)
-                os.environ.setdefault(k.strip(), v.strip())
+                v = v.strip()
+                if len(v) >= 2 and v[0] in '"\'' and v[-1] == v[0]: v = v[1:-1]  # strip matching surrounding quotes
+                os.environ.setdefault(k.strip(), v)
 load_env()
 NS = 'xmlns:adtcore="http://www.sap.com/adt/core"'
 # all system-specifics come from .env (+ CLI flags) — nothing hardcoded. resolved in configure():
-B_URL = USER = PW = TR = PKG = CLIENT = AUTH = None
+B_URL = USER = PW = TR = PKG = CLIENT = AUTH = None; VERBOSE = False
 def configure(a=None):
-    global B_URL, USER, PW, TR, PKG, CLIENT, AUTH, _ctx
+    global B_URL, USER, PW, TR, PKG, CLIENT, AUTH, _ctx, VERBOSE
     g = os.environ.get
+    VERBOSE = bool(a and getattr(a, 'verbose', False))
     B_URL  = (a and a.host) or g('SAP_URL') or sys.exit('set SAP_URL=http://host:port (.env or --host)')
     _ctx   = ssl._create_unverified_context() if (a and a.insecure) else ssl.create_default_context()
     USER   = (a and a.user) or g('SAP_USER') or sys.exit('set SAP_USER (.env or --user)')
@@ -163,6 +166,8 @@ def _err(body):
     for a, b in re.findall(r'<message[^>]*>([^<]*)</message>|<txt>([^<]*)</txt>', body or ''):
         m = (a or b).strip()
         if m and 'cancelled' not in m.lower(): print('   !', m)
+    if VERBOSE and body:   # non-XML (JSON/HTML) error bodies leave the regex empty -> dump raw to debug
+        print('   . raw:', re.sub(r'\s+', ' ', body.strip())[:800])
 def build(t, name, src=None, group=None, srvd=None, run=False):
     s = TYPES[t]; nl = name.lower(); mode = s.get('mode', 'src')
     coll = s['coll'] or f"/sap/bc/adt/functions/groups/{(group or '').lower()}/fmodules"
@@ -251,6 +256,7 @@ def main():
     ap.add_argument('--host', help='SAP base URL (overrides SAP_URL)'); ap.add_argument('--user')
     ap.add_argument('--client'); ap.add_argument('--package'); ap.add_argument('--transport')
     ap.add_argument('--insecure', action='store_true', help='skip TLS cert verification (self-signed dev systems only)')
+    ap.add_argument('--verbose', action='store_true', help='dump the raw server response body on errors (debug non-XML errors)')
     a = ap.parse_args()
     configure(a)
     if a.file == 'probe':

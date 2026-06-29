@@ -80,6 +80,7 @@ SAP_TRANSPORT=            # 로컬($TMP) 패키지인 경우 비워둡니다.
 - `--src`: 업로드할 소스 파일을 명시합니다.
 - `--host` / `--user` / `--client` / `--package` / `--transport`: `.env` 파일의 설정을 덮어씁니다.
 - `--insecure`: TLS 인증서 검증을 생략합니다. (Self-signed 인증서를 쓰는 개발 환경 전용)
+- `--verbose`: 에러 발생 시 서버의 원본 응답 바디를 출력합니다. (비-XML 에러를 디버깅할 때 유용)
 
 ### 지원하는 객체 유형 (총 16종)
 
