@@ -14,7 +14,7 @@ Config from ../.env: SAP_URL, SAP_USER, SAP_PASSWORD, SAP_PACKAGE (SAP_CLIENT/SA
 Nothing system-specific is defaulted: sap-client is omitted unless set (server uses the logon default);
 package & transport are validated (run `abap probe`), not guessed.
 """
-import os, re, sys, base64, argparse, urllib.request, urllib.parse, http.cookiejar, ssl
+import os, re, sys, base64, argparse, urllib.request, urllib.parse, http.cookiejar, ssl, html
 # cross-platform: never crash on a Windows cp1252 console if output holds non-ASCII (e.g. SAP message text)
 try: sys.stdout.reconfigure(encoding='utf-8', errors='replace'); sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 except Exception: pass
@@ -169,26 +169,137 @@ def _err(body):
         if m and 'cancelled' not in m.lower(): print('   !', m)
     if VERBOSE and body:   # non-XML (JSON/HTML) error bodies leave the regex empty -> dump raw to debug
         print('   . raw:', re.sub(r'\s+', ' ', body.strip())[:800])
-def build(t, name, src=None, group=None, srvd=None, run=False):
+def _attr(s, name):  # pull an XML attribute value regardless of attribute order
+    m = re.search(name + r'="([^"]*)"', s or ''); return m.group(1) if m else ''
+def _aunit(op, obj):  # run ABAP Unit on an object URI, print a pass/fail summary
+    # ⚠ <options> & children are UNqualified (no aunit: prefix) and media is application/* —
+    #   a namespaced <aunit:options> is silently ignored → empty <runResult/> (looks green, ran nothing).
+    body = ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<aunit:runConfiguration xmlns:aunit="http://www.sap.com/adt/aunit">'
+            '<external><coverage active="false"/></external>'
+            '<options><uriType value="semantic"/>'
+            '<testDeterminationStrategy sameProgram="true" assignedTests="false"/>'
+            '<testRiskLevels harmless="true" dangerous="true" critical="true"/>'
+            '<testDurations short="true" medium="true" long="true"/>'
+            '<withNavigationUri enabled="true"/></options>'
+            '<adtcore:objectSets xmlns:adtcore="http://www.sap.com/adt/core">'
+            '<objectSet kind="inclusive"><adtcore:objectReferences>'
+            f'<adtcore:objectReference adtcore:uri="{obj}"/>'
+            '</adtcore:objectReferences></objectSet></adtcore:objectSets></aunit:runConfiguration>')
+    st, b, _ = req(op, 'POST', q('/sap/bc/adt/abapunit/testruns'), data=body.encode(),
+                   token=csrf(op), ct='application/*', accept='application/*')
+    if st >= 400: print(f'  test: HTTP {st}'); _err(b); return False
+    if '<program' not in (b or ''):   # no <program> = nothing ran (NOT a pass — see LEARNINGS I6)
+        print('  test: no ABAP Unit tests found for this object'); return None
+    methods = re.findall(r'<testMethod\b[^>]*adtcore:name="([^"]*)"', b)
+    fails = []
+    for at, inner in re.findall(r'<alert\b([^>]*)>(.*?)</alert>', b, re.S):
+        sev, kind = _attr(at, 'severity'), _attr(at, 'kind')
+        if sev in ('critical', 'fatal') or 'abort' in kind.lower():
+            ti = re.search(r'<title>([^<]*)', inner)
+            loc = re.search(r'start=(\d+)', inner)   # line number from the alert's stack/navigation URI
+            fails.append((kind or sev, html.unescape(ti.group(1).strip()) if ti else '', loc.group(1) if loc else ''))
+    if fails:
+        print(f'  test: {len(methods)} methods, {len(fails)} FAILED')
+        for kind, ti, line in fails[:20]: print(f'     x [{kind}] {ti}' + (f'  @{line}' if line else ''))
+        return False
+    print(f'  test: {len(methods)} methods, all passed')
+    return True
+def _atc(op, obj, max_prio=2):  # run ATC; gate on findings at priority 1..max_prio (P3 advisory). returns True/False/None
+    _, cb, _ = req(op, 'GET', q('/sap/bc/adt/atc/customizing'), accept='application/*')
+    m = (re.search(r'name="systemCheckVariant"[^>]*value="([^"]*)"', cb or '')
+         or re.search(r'value="([^"]*)"[^>]*name="systemCheckVariant"', cb or ''))
+    variant = m.group(1) if m else ''
+    if not variant: print('  atc: could not resolve system check variant'); return None
+    _, wl, _ = req(op, 'POST', q('/sap/bc/adt/atc/worklists', checkVariant=variant),
+                   token=csrf(op), accept='text/plain')
+    wl = (wl or '').strip()
+    if not re.match(r'^[0-9A-Fa-f]{8,}$', wl): print(f'  atc: worklist failed ({wl[:60]})'); return None
+    run = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<atc:run maximumVerdicts="100" xmlns:atc="http://www.sap.com/adt/atc">'
+           '<objectSets xmlns:adtcore="http://www.sap.com/adt/core">'
+           '<objectSet kind="inclusive"><adtcore:objectReferences>'
+           f'<adtcore:objectReference adtcore:uri="{obj}"/>'
+           '</adtcore:objectReferences></objectSet></objectSets></atc:run>')
+    st, rb, _ = req(op, 'POST', q('/sap/bc/adt/atc/runs', worklistId=wl), data=run.encode(),
+                    token=csrf(op), ct='application/xml', accept='application/xml')
+    if st >= 400: print(f'  atc: HTTP {st}'); _err(rb); return None   # couldn't run → advisory, don't gate the build
+    sm = re.search(r'FINDING_STATS</[^>]*>\s*<[^>]*description>([^<]*)', rb or '')
+    nums = [int(x) for x in re.findall(r'\d+', sm.group(1))] if sm else []
+    total, gated = (sum(nums), sum(nums[:max_prio])) if nums else (None, None)
+    if total == 0: print('  atc: clean (0 findings)'); return True
+    _, wb, _ = req(op, 'GET', q(f'/sap/bc/adt/atc/worklists/{wl}', includeExemptedFindings='false'), accept='application/*')
+    finds = re.findall(r'<[\w:]*finding\b([^>]*)', wb or '')
+    print(f'  atc: {total if total is not None else len(finds)} findings'
+          + (f' (prio {sm.group(1)})' if sm else '')
+          + (f'  [gate P1-{max_prio}: {gated}]' if gated is not None else ''))
+    shown, seen = 0, set()   # the worklist can list each finding more than once → dedup by (message, line)
+    for at in finds:
+        msg = html.unescape(_attr(at, 'messageTitle') or _attr(at, 'checkTitle'))
+        if not msg: continue
+        ln = re.search(r'start=(\d+)', _attr(at, 'location'))
+        key = (msg, ln.group(1) if ln else '')
+        if key in seen: continue
+        seen.add(key)
+        print(f'     - P{_attr(at, "priority")} {msg}' + (f'  @{ln.group(1)}' if ln else ''))
+        shown += 1
+        if shown >= 20: print('     … (more)'); break
+    return (gated == 0) if gated is not None else (len(finds) == 0)
+def _verdict(rc, show=True):  # one final gate line; returns rc so callers can `return _verdict(rc)`
+    if show:
+        print('  => ' + {0: 'PASS', 1: 'FAIL activate/compile', 2: 'FAIL unit', 3: 'FAIL atc'}.get(rc, 'FAIL') + f'  [exit {rc}]')
+    return rc
+def _doc(op, obj):  # report ABAP Doc ("!) coverage for a code object — verify-loop guardrail, READ-ONLY (no slop stubs)
+    st, src, _ = req(op, 'GET', q(obj + '/source/main'), accept='text/plain')
+    if st >= 400 or not src: print(f'  doc: source unavailable (HTTP {st})'); return
+    lines = src.splitlines()
+    def documented(i):   # is the declaration on line i preceded (past blank lines) by an ABAP Doc "! line?
+        j = i - 1
+        while j >= 0 and not lines[j].strip(): j -= 1
+        return j >= 0 and lines[j].lstrip().startswith('"!')
+    hdr, meths, impl = None, [], False
+    for i, ln in enumerate(lines):
+        if re.match(r'^\s*(?:CLASS|INTERFACE)\s+\S+\s+IMPLEMENTATION', ln, re.I): impl = True   # stop at impl part
+        if hdr is None and re.match(r'^\s*(?:CLASS|INTERFACE|REPORT|PROGRAM|FUNCTION)\b', ln, re.I) \
+           and not re.search(r'\bIMPLEMENTATION\b', ln, re.I): hdr = documented(i)
+        if not impl:
+            m = re.match(r'^\s*(?:CLASS-)?METHODS:?\s+([\w~]+)', ln, re.I)
+            if m: meths.append((m.group(1), documented(i)))
+    nd = sum(1 for _, d in meths if d)
+    parts = (['header ' + ('ok' if hdr else 'MISSING')] if hdr is not None else []) \
+          + ([f'methods {nd}/{len(meths)} documented'] if meths else [])
+    print('  doc: ' + (', '.join(parts) if parts else 'no public API to document'))
+    missing = [n for n, d in meths if not d]
+    if missing: print('     undocumented: ' + ', '.join(missing[:15]) + (' …' if len(missing) > 15 else ''))
+def build(t, name, src=None, group=None, srvd=None, run=False, test=False, atc=False, doc=False, atc_max_prio=2):
     s = TYPES[t]; nl = name.lower(); mode = s.get('mode', 'src')
     coll = s['coll'] or f"/sap/bc/adt/functions/groups/{(group or '').lower()}/fmodules"
     obj = f"{coll}/{nl}"
     A, B = opener(), opener()
-    cre = s['cre'](name, group=group, srvd=srvd)
+    if src is None and mode != 'createonly':   # verify-only: object already exists, nothing to upload
+        print(f"[verify] {name}"); rc = 0
+        if run and s.get('run'):
+            _, rb, _ = req(B, 'POST', q(f'/sap/bc/adt/oo/classrun/{nl}'), token=csrf(B), accept='text/plain')
+            print('--- RUN ---'); print(rb)
+        if test and _aunit(B, obj) is False: rc = 2
+        if atc and _atc(B, obj, atc_max_prio) is False and rc == 0: rc = 3
+        if doc and t in ('class', 'intf', 'prog', 'fm'): _doc(B, obj)
+        return _verdict(rc)
+    cre = s['cre'](name, group=group, srvd=srvd); rc = 0
     st, cb, _ = req(A, 'POST', q(coll, corrNr=TR), data=cre.encode(), token=csrf(A), ct=s['media'])
     out = [f"create {st}"]
-    if st >= 400 and 'already exist' not in cb.lower(): _err(cb)   # "already exists" on rebuild is benign
+    if st >= 400 and 'already exist' not in cb.lower(): _err(cb); rc = 1   # "already exists" on rebuild is benign
     if mode != 'createonly':
         lst, lb, _ = req(A, 'POST', q(obj, _action='LOCK', accessMode='MODIFY'), token=csrf(A),
                          accept='application/vnd.sap.as+xml;dataname=com.sap.adt.lock.Result')
         m = re.search(r'<LOCK_HANDLE>([^<]*)', lb); lh = m.group(1).strip() if m else ''
         if not lh:   # lock failed -> surface it and stop, don't PUT with an empty lock handle
-            out.append(f'lock FAILED (http={lst})'); print('  '.join(out)); _err(lb); return
+            out.append(f'lock FAILED (http={lst})'); print('  '.join(out)); _err(lb); return _verdict(1)
         if mode == 'xml': purl, pct = q(obj, lockHandle=lh, corrNr=TR), s['media']
         else:             purl, pct = q(obj + '/source/main', lockHandle=lh, corrNr=TR), 'text/plain; charset=utf-8'
         st, pb, _ = req(A, 'PUT', purl, data=open(src, 'rb').read().replace(b'\r\n', b'\n'), token=csrf(A), ct=pct)
         out.append(f"put {st}")
-        if st >= 400: _err(pb)
+        if st >= 400: _err(pb); rc = 1
         req(A, 'POST', q(obj, _action='UNLOCK', lockHandle=lh), token=csrf(A))
     act = (f'<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences {NS}>'
            f'<adtcore:objectReference adtcore:uri="{obj}" adtcore:type="{s["atype"]}" adtcore:name="{name}"/></adtcore:objectReferences>')
@@ -197,6 +308,7 @@ def build(t, name, src=None, group=None, srvd=None, run=False):
     m = re.search(r'activationExecuted="([^"]*)"', ab)
     out.append(f'activate={m.group(1) if m else "?"}')
     print('  '.join(out)); _err(ab)
+    if re.search(r'\btype="[EA]"', ab or ''): rc = 1   # E=error / A=abort in activation = compile/type failure ("false" with no E/A = benign no-op = ok)
     if s.get('publish'):
         pub = (f'<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences {NS}>'
                f'<adtcore:objectReference adtcore:uri="{obj}" adtcore:type="SRVB/SVB" adtcore:name="{name}"/></adtcore:objectReferences>')
@@ -208,6 +320,11 @@ def build(t, name, src=None, group=None, srvd=None, run=False):
     if run and s.get('run'):
         _, rb, _ = req(B, 'POST', q(f'/sap/bc/adt/oo/classrun/{nl}'), token=csrf(B), accept='text/plain')
         print('--- RUN ---'); print(rb)
+    if rc == 0:   # verify only a cleanly-activated object (broken source can't be meaningfully tested)
+        if test and _aunit(B, obj) is False: rc = 2
+        if atc and _atc(B, obj, atc_max_prio) is False and rc == 0: rc = 3
+        if doc and t in ('class', 'intf', 'prog', 'fm'): _doc(B, obj)
+    return _verdict(rc, show=bool(rc or test or atc))
 
 # ---- probe: discover, don't assume ----
 def probe(pkg=None):
@@ -254,6 +371,10 @@ def main():
     ap.add_argument('--group', help='function module: parent group')
     ap.add_argument('--srvd',  help='service binding: service definition')
     ap.add_argument('--run', action='store_true', help='class: run classrun after activate')
+    ap.add_argument('--test', action='store_true', help='run ABAP Unit after activate (verify loop)')
+    ap.add_argument('--atc', action='store_true', help='run ATC static checks after activate (verify loop)')
+    ap.add_argument('--doc', action='store_true', help='report ABAP Doc coverage of the public API (verify loop)')
+    ap.add_argument('--atc-max-prio', type=int, default=2, help='ATC gate: fail on findings at priority 1..N (default 2; P3 = advisory)')
     ap.add_argument('--host', help='SAP base URL (overrides SAP_URL)'); ap.add_argument('--user')
     ap.add_argument('--client'); ap.add_argument('--package'); ap.add_argument('--transport')
     ap.add_argument('--insecure', action='store_true', help='skip TLS cert verification (self-signed dev systems only)')
@@ -279,7 +400,7 @@ def main():
     if t == 'fm' and not a.group: sys.exit("fm needs --group <GROUP>")
     if t == 'srvb' and not a.srvd: sys.exit("srvb needs --srvd <SERVICE_DEFINITION>")
     print(f"[{t}] {name}" + (f" in {a.group}" if a.group else "") + (f" -> {a.srvd}" if a.srvd else ""))
-    build(t, name, src=src, group=a.group, srvd=a.srvd, run=a.run)
+    sys.exit(build(t, name, src=src, group=a.group, srvd=a.srvd, run=a.run, test=a.test, atc=a.atc, doc=a.doc, atc_max_prio=a.atc_max_prio) or 0)
 
 if __name__ == '__main__':
     main()
