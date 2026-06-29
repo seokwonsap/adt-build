@@ -13,10 +13,10 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$HERE/.env" ] && { set -a; . "$HERE/.env"; set +a; }
-B="${SAP_URL:-${SAP_BUILD_URL:?set SAP_URL=http://host:port in .env}}"
+B="${SAP_URL:?set SAP_URL=http://host:port in .env}"
 U="${SAP_USER:?set SAP_USER in .env}:${SAP_PASSWORD:?set SAP_PASSWORD in .env}"
 PKG="${SAP_PACKAGE:?set SAP_PACKAGE in .env}"
-TR="${SAP_TRANSPORT:-}"; CORR=""; [ -n "$TR" ] && CORR="${CORR}"
+TR="${SAP_TRANSPORT:-}"; CORR=""; [ -n "$TR" ] && CORR="corrNr=$TR&"   # corrNr only when a transport is set
 C=""; [ -n "${SAP_CLIENT:-}" ] && C="sap-client=$SAP_CLIENT"   # unset -> omit, server uses logon default client
 ST='X-sap-adt-sessiontype: stateful'
 
@@ -113,6 +113,7 @@ if [ "$MODE" != "createonly" ]; then   # FUGR = create + activate only (no user 
 T=$(tok); LH=$(curl -s -m 20 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" \
   -H 'Accept: application/vnd.sap.as+xml;dataname=com.sap.adt.lock.Result' \
   -X POST "$B$OBJ?_action=LOCK&accessMode=MODIFY&$C" | grep -oE '<LOCK_HANDLE>[^<]*' | sed 's/<LOCK_HANDLE>//')
+[ -n "$LH" ] || { echo "lock FAILED (no handle — object locked / inactive / no permission)"; exit 1; }
 # 3) PUT — text source/main for src types; whole object XML to the object URI for doma/dtel
 if [ "$MODE" = "xml" ]; then PUT_URL="$B$OBJ?lockHandle=$LH&${CORR}$C"; PUT_CT="$MEDIA"
 else PUT_URL="$B$OBJ/source/main?lockHandle=$LH&${CORR}$C"; PUT_CT="text/plain; charset=utf-8"; fi

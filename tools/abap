@@ -31,9 +31,10 @@ NS = 'xmlns:adtcore="http://www.sap.com/adt/core"'
 # all system-specifics come from .env (+ CLI flags) — nothing hardcoded. resolved in configure():
 B_URL = USER = PW = TR = PKG = CLIENT = AUTH = None
 def configure(a=None):
-    global B_URL, USER, PW, TR, PKG, CLIENT, AUTH
+    global B_URL, USER, PW, TR, PKG, CLIENT, AUTH, _ctx
     g = os.environ.get
-    B_URL  = (a and a.host) or g('SAP_URL') or g('SAP_BUILD_URL') or sys.exit('set SAP_URL=http://host:port (.env or --host)')
+    B_URL  = (a and a.host) or g('SAP_URL') or sys.exit('set SAP_URL=http://host:port (.env or --host)')
+    _ctx   = ssl._create_unverified_context() if (a and a.insecure) else ssl.create_default_context()
     USER   = (a and a.user) or g('SAP_USER') or sys.exit('set SAP_USER (.env or --user)')
     PW     = g('SAP_PASSWORD') or sys.exit('set SAP_PASSWORD (.env)')
     CLIENT = (a and a.client) or g('SAP_CLIENT')   # unset -> sap-client omitted (server uses logon default)
@@ -112,7 +113,7 @@ def detect(path, txt):
     if ext == '.asbdef' or 'IMPLEMENTATION IN CLASS' in head or 'DEFINE BEHAVIOR FOR' in head: return 'bdef'
     if ext == '.asddls' or 'DEFINE ' in head:
         if 'DEFINE STRUCTURE' in head: return 'stru'
-        if 'DEFINE TABLE TYPE' in head: return 'ttyp'
+        if 'DEFINE TABLE TYPE' in head: return None   # TTYP not supported yet (don't mis-detect as 'tabl')
         if 'DEFINE TABLE' in head: return 'tabl'
         if 'DEFINE SERVICE' in head: return 'srvd'
         if 'DEFINE ROLE' in head: return 'dcl'
@@ -127,7 +128,7 @@ def detect(path, txt):
             'FUNCTION':'fm','TYPE-POOL':'typegrp'}.get(kw)
 
 # ---- http (urllib + cookie jar; no curl/deps) ----
-_ctx = ssl._create_unverified_context()
+_ctx = None   # TLS context — set in configure(): verify certs by default, --insecure to skip (self-signed dev)
 def opener():
     return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
                                        urllib.request.HTTPSHandler(context=_ctx))
@@ -169,10 +170,11 @@ def build(t, name, src=None, group=None, srvd=None, run=False):
     out = [f"create {st}"]
     if st >= 400 and 'already exist' not in cb.lower(): _err(cb)   # "already exists" on rebuild is benign
     if mode != 'createonly':
-        _, lb, _ = req(A, 'POST', q(obj, _action='LOCK', accessMode='MODIFY'), token=csrf(A),
-                       accept='application/vnd.sap.as+xml;dataname=com.sap.adt.lock.Result')
-        m = re.search(r'<LOCK_HANDLE>([^<]*)', lb); lh = m.group(1) if m else ''
-        if not lh: print('   ✗ no lock handle:', re.sub(r'<[^>]*>', ' ', lb)[:160].strip())
+        lst, lb, _ = req(A, 'POST', q(obj, _action='LOCK', accessMode='MODIFY'), token=csrf(A),
+                         accept='application/vnd.sap.as+xml;dataname=com.sap.adt.lock.Result')
+        m = re.search(r'<LOCK_HANDLE>([^<]*)', lb); lh = m.group(1).strip() if m else ''
+        if not lh:   # lock failed -> surface it and stop, don't PUT with an empty lock handle
+            out.append(f'lock FAILED (http={lst})'); print('  '.join(out)); _err(lb); return
         if mode == 'xml': purl, pct = q(obj, lockHandle=lh, corrNr=TR), s['media']
         else:             purl, pct = q(obj + '/source/main', lockHandle=lh, corrNr=TR), 'text/plain; charset=utf-8'
         st, pb, _ = req(A, 'PUT', purl, data=open(src, 'rb').read(), token=csrf(A), ct=pct)
@@ -245,6 +247,7 @@ def main():
     ap.add_argument('--run', action='store_true', help='class: run classrun after activate')
     ap.add_argument('--host', help='SAP base URL (overrides SAP_URL)'); ap.add_argument('--user')
     ap.add_argument('--client'); ap.add_argument('--package'); ap.add_argument('--transport')
+    ap.add_argument('--insecure', action='store_true', help='skip TLS cert verification (self-signed dev systems only)')
     a = ap.parse_args()
     configure(a)
     if a.file == 'probe':

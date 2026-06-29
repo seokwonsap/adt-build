@@ -56,7 +56,7 @@ The user needs a **non-initial** SU01 password (log in once via GUI to clear "ch
 | `define service ZUI_X { ... }` (`.assrvd`) | service definition |
 | `<doma:domain ...>` (`.xml`) | domain |
 
-Flags: `--run` (run a class via classrun), `--group ZFG` (function module's group), `--srvd ZX` (binding's service definition), `--type` / `--name` (override detection, or no-source types), `--host` / `--user` / `--client` / `--package` / `--transport` (override `.env`).
+Flags: `--run` (run a class via classrun), `--group ZFG` (function module's group), `--srvd ZX` (binding's service definition), `--type` / `--name` (override detection, or no-source types), `--src` (explicit source file), `--host` / `--user` / `--client` / `--package` / `--transport` (override `.env`), `--insecure` (skip TLS cert verification — self-signed dev systems only).
 
 ### Supported object types (16)
 
@@ -98,7 +98,11 @@ package  : ZLOCAL  exists (type=DEVC/K, responsible=DEVELOPER, softwareComponent
 transport: ABCK900123  [Modifiable] owner=DEVELOPER
 ```
 
-When something is ambiguous — which package, which transport — confirm it rather than assume. For AI-driven use: **probe first, surface the values, ask the user when unsure, then build with explicit values.**
+**Package and transport decide where and how your changes land** — and a value sitting in `.env` is a *standing choice*, not necessarily this task's intent. So the tool requires them explicitly (no default — it never invents a target), and for AI-driven use the agent should **confirm scope up front, before creating anything**:
+
+> which package? · local or transportable? · broad access or limited?
+
+Then `abap probe` to surface the live state, and build with explicit values. **Probe, confirm, then write** — never assume the standing config fits a new task.
 
 ## How it works
 
