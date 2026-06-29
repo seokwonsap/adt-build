@@ -106,6 +106,45 @@ tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS
 # → Success! GET /sap/opu/odata4/sap/zui_orders_o4/srvd/sap/zui_orders/0001/Orders now returns live JSON
 ```
 
+## ✅ Live run (real output)
+
+Every line below is actual output from running adt-build against a live on-premise SAP system. Only the host is masked.
+
+![adt-build live run on an on-premise SAP system](assets/live-run.png)
+
+<details>
+<summary>Copy-paste version</summary>
+
+```console
+$ tools/abap probe
+host     : http://a4h-dev:50000
+user     : DEV001
+client   : 001
+connect  : discovery http=200  (ok)
+package  : ZVIBE  exists (type=DEVC/K, responsible=DEVELOPER, softwareComponent=HOME)
+           -> TRANSPORTABLE: a transport request is required
+transport: A4HK900120  [Modifiable] owner=DEV001
+
+$ tools/abap zcl_adt_hello.abap            # build it, headless
+[class] ZCL_ADT_HELLO
+create 200  put 200  activate=true
+
+$ tools/abap zcl_adt_hello.abap --run      # run it on the live system
+--- RUN ---
+Hello from headless ABAP.
+Created, activated, and executed on a live on-premise SAP system via raw ADT REST.
+
+$ curl '.../zui_vibe_ping_o4/srvd/sap/zui_vibe_ping/0001/Booking?$top=2&$format=json'
+{
+  "value": [
+    { "CustomerName": "Alice", "Amount": 199.00, "CurrencyCode": "EUR", "Status": "A" },
+    { "CustomerName": "Alice", "Amount": 199.00, "CurrencyCode": "EUR", "Status": "R" }
+  ]
+}
+```
+
+</details>
+
 ## 🛑 No Guesswork: Explicit Configuration
 
 System-specific values (port, client, package, transport) vary wildly. adt-build never hardcodes these or relies on silent fallbacks:

@@ -109,6 +109,45 @@ tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS
 # 결과: GET /sap/opu/odata4/sap/zui_orders_o4/srvd/sap/zui_orders/0001/Orders 경로로 JSON 응답 확인 가능
 ```
 
+## ✅ 라이브 실행 (실제 출력)
+
+아래는 전부 실제 온프레미스 SAP 시스템에 adt-build를 돌려 나온 진짜 출력입니다. (호스트만 마스킹했습니다.)
+
+![adt-build 라이브 실행 (실제 출력)](assets/live-run.png)
+
+<details>
+<summary>복사용 텍스트</summary>
+
+```console
+$ tools/abap probe
+host     : http://a4h-dev:50000
+user     : DEV001
+client   : 001
+connect  : discovery http=200  (ok)
+package  : ZVIBE  exists (type=DEVC/K, responsible=DEVELOPER, softwareComponent=HOME)
+           -> TRANSPORTABLE: a transport request is required
+transport: A4HK900120  [Modifiable] owner=DEV001
+
+$ tools/abap zcl_adt_hello.abap            # 헤드리스로 빌드
+[class] ZCL_ADT_HELLO
+create 200  put 200  activate=true
+
+$ tools/abap zcl_adt_hello.abap --run      # 라이브 시스템에서 실행
+--- RUN ---
+Hello from headless ABAP.
+Created, activated, and executed on a live on-premise SAP system via raw ADT REST.
+
+$ curl '.../zui_vibe_ping_o4/srvd/sap/zui_vibe_ping/0001/Booking?$top=2&$format=json'
+{
+  "value": [
+    { "CustomerName": "Alice", "Amount": 199.00, "CurrencyCode": "EUR", "Status": "A" },
+    { "CustomerName": "Alice", "Amount": 199.00, "CurrencyCode": "EUR", "Status": "R" }
+  ]
+}
+```
+
+</details>
+
 ## 🛑 환경값 임의 추측 배제 (No Guessing)
 
 이 도구는 포트, Client, 패키지, 트랜스포트(TR)처럼 시스템마다 다른 중요 설정값을 코드에 하드코딩하거나 임의의 기본값으로 넘겨짚지(Guessing) 않습니다.
