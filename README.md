@@ -2,6 +2,8 @@
 
 **English** · [한국어](README.ko.md)
 
+![adt-build — Headless ABAP Object Builder via the ADT REST API](assets/banner.jpg)
+
 > **Headless ABAP object builder via the ADT REST API — built for AI-driven ABAP development ("vibe coding") on on-premise SAP systems, where the official Cloud-only tooling doesn't yet reach.**
 
 A headless CLI tool to build and activate ABAP objects directly from source files using the ADT REST API—no Eclipse, no SAP GUI required.

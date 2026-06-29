@@ -2,6 +2,8 @@
 
 [English](README.md) · **한국어**
 
+![adt-build — ADT REST API 기반 헤드리스 ABAP 빌더](assets/banner.jpg)
+
 > **ADT REST API로 ABAP 객체를 헤드리스(Headless)로 빌드합니다.**
 > 공식 툴(ABAP Cloud 전용)이 아직 닿지 않는 온프레미스 SAP 환경에서, AI 기반 ABAP 개발(이른바 '바이브 코딩')을 구현하기 위해 만들었습니다.
 
