@@ -1,4 +1,4 @@
-# abap-adt-builder
+# adt-build
 
 Build ABAP objects **headless from source files** via the ADT REST API — no Eclipse, no SAP GUI. One command auto-detects the object's type and name, then creates → locks → PUTs source → activates (and publishes / runs) over plain HTTP(S). **16 object types**, including a full RAP service exposed as a **live OData V4 endpoint**.
 
@@ -24,7 +24,7 @@ ADT is a REST API underneath. This tool speaks it directly and encodes the per-o
 Requires **Python 3** (standard library only — nothing to pip install). `bash` + `curl` only for the optional fallback engine.
 
 ```bash
-git clone <this-repo> && cd abap-adt-builder
+git clone <this-repo> && cd adt-build
 cp .env.example .env      # then fill in your system + credentials
 ```
 
