@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""
+abap — one smart command to build any ABAP object headless via raw ADT REST.
+
+  abap <file>                  # auto-detect type + name from the source, build (+activate, +publish/run)
+  abap <file> --run            # class: also run classrun
+  abap <file> --group ZFG      # function module: target group
+  abap --type fugr --name ZFG_DEMO          # no-source types (fugr)
+  abap --type srvb --name ZX_O4 --srvd ZX   # service binding (+auto publish)
+
+One CLI for 16 object types. Logic lives in the TYPES registry (data) + one engine.
+Config from ../.env: SAP_URL, SAP_USER, SAP_PASSWORD, SAP_PACKAGE (SAP_CLIENT/SAP_TRANSPORT optional). See README.md.
+"""
+import os, re, sys, base64, argparse, urllib.request, urllib.parse, http.cookiejar, ssl
+
+# ---- env ----
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def load_env():
+    p = os.path.join(HERE, '.env')
+    if os.path.exists(p):
+        for line in open(p):
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                k, v = line.split('=', 1)
+                os.environ.setdefault(k.strip(), v.strip())
+load_env()
+NS = 'xmlns:adtcore="http://www.sap.com/adt/core"'
+# all system-specifics come from .env (+ CLI flags) — nothing hardcoded. resolved in configure():
+B_URL = USER = PW = TR = PKG = CLIENT = AUTH = None
+def configure(a=None):
+    global B_URL, USER, PW, TR, PKG, CLIENT, AUTH
+    g = os.environ.get
+    B_URL  = (a and a.host) or g('SAP_URL') or g('SAP_BUILD_URL') or sys.exit('set SAP_URL=http://host:port (.env or --host)')
+    USER   = (a and a.user) or g('SAP_USER') or sys.exit('set SAP_USER (.env or --user)')
+    PW     = g('SAP_PASSWORD') or sys.exit('set SAP_PASSWORD (.env)')
+    CLIENT = (a and a.client) or g('SAP_CLIENT', '001')
+    PKG    = (a and a.package) or g('SAP_PACKAGE') or sys.exit('set SAP_PACKAGE (.env or --package)')
+    TR     = (a and a.transport) or g('SAP_TRANSPORT', '')   # empty = omit corrNr (local/non-transportable pkg)
+    AUTH   = 'Basic ' + base64.b64encode(f'{USER}:{PW}'.encode()).decode()
+
+# ---- type registry (data, not code) ----
+# coll: collection endpoint · atype: adtcore type for activation · media: create media type
+# mode: src (text->source/main) | xml (object xml->object uri) | createonly (create+activate, no put)
+# name_re: regex to pull the object name from the source · cre: create-payload builder
+def _cre_blue(t):  # <blue:blueSource> create (tabl/stru/bdef)
+    extra = ' xmlns:abapsource="http://www.sap.com/adt/abapsource" abapsource:fixPointArithmetic="false" abapsource:activeUnicodeCheck="false"' if t == 'TABL/DT' else ''
+    return lambda n, **k: (f'<?xml version="1.0" encoding="UTF-8"?><blue:blueSource xmlns:blue="http://www.sap.com/wbobj/blue"{extra} {NS} '
+                           f'adtcore:name="{n}" adtcore:type="{t}" adtcore:description="{n}"><adtcore:packageRef adtcore:name="{PKG}"/></blue:blueSource>')
+def _cre(root, ns, atype, attrs=''):
+    return lambda n, **k: (f'<?xml version="1.0" encoding="UTF-8"?><{root} {ns} {NS} adtcore:name="{n}" '
+                           f'adtcore:type="{atype}" adtcore:description="{n}"{attrs}><adtcore:packageRef adtcore:name="{PKG}"/></{root}>')
+
+def _cre_fm(n, **k):
+    return (f'<?xml version="1.0" encoding="UTF-8"?><fmodule:abapFunctionModule xmlns:fmodule="http://www.sap.com/adt/functions/fmodules" {NS} '
+            f'adtcore:name="{n}" adtcore:type="FUGR/FF" adtcore:description="{n}" fmodule:processingType="normal" fmodule:releaseState="notReleased"/>')
+def _cre_srvb(n, srvd=None, **k):
+    sdl = (srvd or '').lower()
+    return (f'<?xml version="1.0" encoding="UTF-8"?><srvb:serviceBinding xmlns:srvb="http://www.sap.com/adt/ddic/ServiceBindings" {NS} '
+            f'srvb:contract="C1" adtcore:name="{n}" adtcore:type="SRVB/SVB" adtcore:description="{n}"><adtcore:packageRef adtcore:name="{PKG}"/>'
+            f'<srvb:services srvb:name="{n}"><srvb:content srvb:version="0001" srvb:releaseState="NOT_RELEASED">'
+            f'<srvb:serviceDefinition adtcore:uri="/sap/bc/adt/ddic/srvd/sources/{sdl}" adtcore:type="SRVD/SRV" adtcore:name="{srvd}"/></srvb:content></srvb:services>'
+            f'<srvb:binding srvb:type="ODATA" srvb:version="V4" srvb:category="0"><srvb:implementation adtcore:name="{n}"/></srvb:binding></srvb:serviceBinding>')
+
+TYPES = {
+ 'class':  dict(coll='/sap/bc/adt/oo/classes', atype='CLAS/OC', media='application/vnd.sap.adt.oo.classes.v4+xml',
+                cre=_cre('class:abapClass','xmlns:class="http://www.sap.com/adt/oo/classes"','CLAS/OC',' class:final="true" class:visibility="public" class:category="generalObjectType"'),
+                name_re=r'\bCLASS\s+(\w+)\s+DEFINITION', run=True),
+ 'intf':   dict(coll='/sap/bc/adt/oo/interfaces', atype='INTF/OI', media='application/vnd.sap.adt.oo.interfaces.v5+xml',
+                cre=_cre('intf:abapInterface','xmlns:intf="http://www.sap.com/adt/oo/interfaces"','INTF/OI'), name_re=r'\bINTERFACE\s+(\w+)'),
+ 'prog':   dict(coll='/sap/bc/adt/programs/programs', atype='PROG/P', media='application/vnd.sap.adt.programs.programs.v2+xml',
+                cre=_cre('program:abapProgram','xmlns:program="http://www.sap.com/adt/programs/programs"','PROG/P',' program:lockedByEditor="false" program:programType="executableProgram"'),
+                name_re=r'\b(?:REPORT|PROGRAM)\s+(\w+)'),
+ 'fugr':   dict(coll='/sap/bc/adt/functions/groups', atype='FUGR/F', media='application/vnd.sap.adt.functions.groups.v3+xml', mode='createonly',
+                cre=_cre('group:abapFunctionGroup','xmlns:group="http://www.sap.com/adt/functions/groups"','FUGR/F',' group:lockedByEditor="false"'), name_re=None),
+ 'fm':     dict(coll=None, atype='FUGR/FF', media='application/vnd.sap.adt.functions.fmodules.v3+xml',
+                cre=_cre_fm, name_re=r'\bFUNCTION\s+(\w+)'),
+ 'cds':    dict(coll='/sap/bc/adt/ddic/ddl/sources', atype='DDLS/DF', media='application/vnd.sap.adt.ddlSource+xml',
+                cre=_cre('ddl:ddlSource','xmlns:ddl="http://www.sap.com/adt/ddic/ddlsources"','DDLS/DF'),
+                name_re=r'define\s+(?:root\s+)?(?:view\s+entity|view|abstract\s+entity|hierarchy)\s+(\w+)'),
+ 'dcl':    dict(coll='/sap/bc/adt/acm/dcl/sources', atype='DCLS/DL', media='application/vnd.sap.adt.dclSource+xml',
+                cre=_cre('dcl:dclSource','xmlns:dcl="http://www.sap.com/adt/acm/dclsources"','DCLS/DL'), name_re=r'define\s+role\s+(\w+)'),
+ 'tabl':   dict(coll='/sap/bc/adt/ddic/tables', atype='TABL/DT', media='application/vnd.sap.adt.tables.v2+xml',
+                cre=_cre_blue('TABL/DT'), name_re=r'define\s+table\s+(\w+)'),
+ 'stru':   dict(coll='/sap/bc/adt/ddic/structures', atype='TABL/DS', media='application/vnd.sap.adt.structures.v2+xml',
+                cre=_cre_blue('TABL/DS'), name_re=r'define\s+structure\s+(\w+)'),
+ 'typegrp':dict(coll='/sap/bc/adt/ddic/typegroups', atype='TYPE/DG', media='application/vnd.sap.adt.ddic.typegroups.v2+xml',
+                cre=_cre('atypgr:abapTypeGroup','xmlns:atypgr="http://www.sap.com/adt/ddic/typegroups"','TYPE/DG'), name_re=r'TYPE-POOL\s+(\w+)'),
+ 'xslt':   dict(coll='/sap/bc/adt/xslt/transformations', atype='XSLT/VT', media='application/vnd.sap.adt.transformations+xml',
+                cre=_cre('trans:transformation','xmlns:trans="http://www.sap.com/adt/transformation"','XSLT/VT',' trans:transformationType="XSLTProgram"'), name_re=None),
+ 'bdef':   dict(coll='/sap/bc/adt/bo/behaviordefinitions', atype='BDEF/BDO', media='application/vnd.sap.adt.blues.v1+xml',
+                cre=_cre_blue('BDEF/BDO'), name_re=r'define\s+behavior\s+for\s+(\w+)'),
+ 'srvd':   dict(coll='/sap/bc/adt/ddic/srvd/sources', atype='SRVD/SRV', media='application/vnd.sap.adt.ddic.srvd.v1+xml',
+                cre=_cre('srvd:srvdSource','xmlns:srvd="http://www.sap.com/adt/ddic/srvdsources"','SRVD/SRV',' srvd:srvdSourceType="S"'), name_re=r'define\s+service\s+(\w+)'),
+ 'srvb':   dict(coll='/sap/bc/adt/businessservices/bindings', atype='SRVB/SVB', media='application/vnd.sap.adt.businessservices.servicebinding.v2+xml',
+                mode='createonly', cre=_cre_srvb, name_re=None, publish=True),
+ 'doma':   dict(coll='/sap/bc/adt/ddic/domains', atype='DOMA/DD', media='application/vnd.sap.adt.domains.v2+xml', mode='xml',
+                cre=_cre('doma:domain','xmlns:doma="http://www.sap.com/dictionary/domain"','DOMA/DD'), name_re=r'adtcore:name="(\w+)"'),
+ 'dtel':   dict(coll='/sap/bc/adt/ddic/dataelements', atype='DTEL/DE', media='application/vnd.sap.adt.dataelements.v2+xml', mode='xml',
+                cre=_cre('blue:wbobj','xmlns:blue="http://www.sap.com/wbobj/dictionary/dtel"','DTEL/DE'), name_re=r'adtcore:name="(\w+)"'),
+}
+
+# ---- type auto-detection from extension + first significant line ----
+def detect(path, txt):
+    head = '\n'.join(l for l in txt.splitlines()
+                     if l.strip() and not l.lstrip().startswith(('*', '"', '@', '//', '<?xml')))[:400].upper()
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.asdcls': return 'dcl'
+    if ext == '.assrvd': return 'srvd'
+    if ext == '.asbdef' or 'IMPLEMENTATION IN CLASS' in head or 'DEFINE BEHAVIOR FOR' in head: return 'bdef'
+    if ext == '.asddls' or 'DEFINE ' in head:
+        if 'DEFINE STRUCTURE' in head: return 'stru'
+        if 'DEFINE TABLE TYPE' in head: return 'ttyp'
+        if 'DEFINE TABLE' in head: return 'tabl'
+        if 'DEFINE SERVICE' in head: return 'srvd'
+        if 'DEFINE ROLE' in head: return 'dcl'
+        if re.search(r'DEFINE\s+(ROOT\s+)?(VIEW|ABSTRACT|HIERARCHY)', head): return 'cds'
+    if ext == '.xml' or txt.lstrip().startswith('<'):
+        if '<XSL' in head or '<XSL:' in txt.upper(): return 'xslt'
+        if 'DOMA:DOMAIN' in txt.upper(): return 'doma'
+        if 'DTEL/DE' in txt.upper() or 'DTEL:DATAELEMENT' in txt.upper(): return 'dtel'
+    # .abap by first keyword
+    kw = head.split()[0] if head.split() else ''
+    return {'CLASS':'class','INTERFACE':'intf','REPORT':'prog','PROGRAM':'prog',
+            'FUNCTION':'fm','TYPE-POOL':'typegrp'}.get(kw)
+
+# ---- http (urllib + cookie jar; no curl/deps) ----
+_ctx = ssl._create_unverified_context()
+def opener():
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+                                       urllib.request.HTTPSHandler(context=_ctx))
+def q(path, **p):
+    p = {k: v for k, v in p.items() if v not in (None, '')}   # drop empty params (e.g. corrNr when no transport)
+    p['sap-client'] = CLIENT
+    return path + ('&' if '?' in path else '?') + urllib.parse.urlencode(p)
+def req(op, method, path, data=None, token=None, ct=None, accept=None, _try=2):
+    h = {'Authorization': AUTH, 'X-sap-adt-sessiontype': 'stateful', 'Accept': accept or '*/*'}
+    if token: h['X-CSRF-Token'] = token
+    if ct: h['Content-Type'] = ct
+    r = urllib.request.Request(B_URL + path, data=data, method=method, headers=h)
+    try:
+        rs = op.open(r, timeout=50); st, body, hd = rs.status, rs.read().decode('utf-8', 'replace'), rs.headers
+    except urllib.error.HTTPError as e:
+        st, body, hd = e.code, e.read().decode('utf-8', 'replace'), e.headers
+    except Exception as e:
+        st, body, hd = 0, str(e), {}
+    if st in (503, 0) and _try > 1:   # transient (server busy / conn drop) → retry once
+        return req(op, method, path, data, token, ct, accept, _try - 1)
+    return st, body, hd
+def csrf(op):
+    _, _, hd = req(op, 'GET', q('/sap/bc/adt/discovery'), token='Fetch')
+    return hd.get('x-csrf-token', '') if hd else ''
+
+# ---- build engine ----
+def _err(body):
+    for a, b in re.findall(r'<message[^>]*>([^<]*)</message>|<txt>([^<]*)</txt>', body or ''):
+        m = (a or b).strip()
+        if m and 'cancelled' not in m.lower(): print('   ✗', m)
+def build(t, name, src=None, group=None, srvd=None, run=False):
+    s = TYPES[t]; nl = name.lower(); mode = s.get('mode', 'src')
+    coll = s['coll'] or f"/sap/bc/adt/functions/groups/{(group or '').lower()}/fmodules"
+    obj = f"{coll}/{nl}"
+    A, B = opener(), opener()
+    cre = s['cre'](name, group=group, srvd=srvd)
+    st, cb, _ = req(A, 'POST', q(coll, corrNr=TR), data=cre.encode(), token=csrf(A), ct=s['media'])
+    out = [f"create {st}"]
+    if st >= 400 and 'already exist' not in cb.lower(): _err(cb)   # "already exists" on rebuild is benign
+    if mode != 'createonly':
+        _, lb, _ = req(A, 'POST', q(obj, _action='LOCK', accessMode='MODIFY'), token=csrf(A),
+                       accept='application/vnd.sap.as+xml;dataname=com.sap.adt.lock.Result')
+        m = re.search(r'<LOCK_HANDLE>([^<]*)', lb); lh = m.group(1) if m else ''
+        if not lh: print('   ✗ no lock handle:', re.sub(r'<[^>]*>', ' ', lb)[:160].strip())
+        if mode == 'xml': purl, pct = q(obj, lockHandle=lh, corrNr=TR), s['media']
+        else:             purl, pct = q(obj + '/source/main', lockHandle=lh, corrNr=TR), 'text/plain; charset=utf-8'
+        st, pb, _ = req(A, 'PUT', purl, data=open(src, 'rb').read(), token=csrf(A), ct=pct)
+        out.append(f"put {st}")
+        if st >= 400: _err(pb)
+        req(A, 'POST', q(obj, _action='UNLOCK', lockHandle=lh), token=csrf(A))
+    act = (f'<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences {NS}>'
+           f'<adtcore:objectReference adtcore:uri="{obj}" adtcore:type="{s["atype"]}" adtcore:name="{name}"/></adtcore:objectReferences>')
+    _, ab, _ = req(B, 'POST', q('/sap/bc/adt/activation', method='activate', preauditRequested='false'),
+                   data=act.encode(), token=csrf(B), ct='application/xml')
+    m = re.search(r'activationExecuted="([^"]*)"', ab)
+    out.append(f'activate={m.group(1) if m else "?"}')
+    print('  '.join(out)); _err(ab)
+    if s.get('publish'):
+        pub = (f'<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences {NS}>'
+               f'<adtcore:objectReference adtcore:uri="{obj}" adtcore:type="SRVB/SVB" adtcore:name="{name}"/></adtcore:objectReferences>')
+        st, pb, _ = req(B, 'POST', q('/sap/bc/adt/businessservices/odatav4/publishjobs', servicename=name, serviceversion='0001'),
+                        data=pub.encode(), token=csrf(B), ct='application/xml')
+        sm = re.search(r'<SHORT_TEXT>([^<]*)', pb)
+        if sm: print('  publish:', sm.group(1))
+        else:  print(f'  publish {st}:'); _err(pb)
+    if run and s.get('run'):
+        _, rb, _ = req(B, 'POST', q(f'/sap/bc/adt/oo/classrun/{nl}'), token=csrf(B), accept='text/plain')
+        print('--- RUN ---'); print(rb)
+
+# ---- cli ----
+def main():
+    ap = argparse.ArgumentParser(description='Build any ABAP object headless (auto type+name).')
+    ap.add_argument('file', nargs='?', help='source file (type+name auto-detected)')
+    ap.add_argument('--type'); ap.add_argument('--name'); ap.add_argument('--src')
+    ap.add_argument('--group', help='function module: parent group')
+    ap.add_argument('--srvd',  help='service binding: service definition')
+    ap.add_argument('--run', action='store_true', help='class: run classrun after activate')
+    ap.add_argument('--host', help='SAP base URL (overrides SAP_URL)'); ap.add_argument('--user')
+    ap.add_argument('--client'); ap.add_argument('--package'); ap.add_argument('--transport')
+    a = ap.parse_args()
+    configure(a)
+    t, name, src = a.type, a.name, a.src or a.file
+    if a.file and not t:
+        txt = open(a.file, encoding='utf-8', errors='replace').read()
+        t = detect(a.file, txt)
+        if not t: sys.exit(f"could not detect type from {a.file} — pass --type")
+        if not name:
+            nr = TYPES[t].get('name_re')
+            if nr:
+                m = re.search(nr, txt, re.I)
+                name = m.group(1).upper() if m else None
+            if not name:  # fallback: filename stem
+                name = os.path.splitext(os.path.basename(a.file))[0].upper()
+    if not t or t not in TYPES: sys.exit(f"unknown/!type: {t} (one of: {', '.join(TYPES)})")
+    if not name: sys.exit("need --name")
+    if t == 'fm' and not a.group: sys.exit("fm needs --group <GROUP>")
+    if t == 'srvb' and not a.srvd: sys.exit("srvb needs --srvd <SERVICE_DEFINITION>")
+    print(f"[{t}] {name}" + (f" in {a.group}" if a.group else "") + (f" -> {a.srvd}" if a.srvd else ""))
+    build(t, name, src=src, group=a.group, srvd=a.srvd, run=a.run)
+
+if __name__ == '__main__':
+    main()
