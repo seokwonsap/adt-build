@@ -43,6 +43,15 @@ SAP_TRANSPORT=            # leave empty for local ($TMP) packages
 
 The user needs a **non-initial** SU01 password (log in once via GUI to clear "change on first logon") and ADT active (`SICF` → `/sap/bc/adt`).
 
+### Ports vary per system
+
+The port in `SAP_URL` isn't fixed — it follows the system's ICM configuration. For instance number `nn`, the common values are:
+
+- HTTP: `50000` (`5nn00`) or `8000` (`80nn`)
+- HTTPS: `50001` (`5nn01`) or `44300` (`443nn`)
+
+Find yours in transaction `SMICM` → Goto → Services, or the instance profile's `icm/server_port_*`. Over the internet, prefer the HTTPS port in `SAP_URL` (with `--insecure` for self-signed certs).
+
 ## Usage
 
 `tools/abap <file>` infers the type from the file extension + first source line, and the name from the declaration:
@@ -122,6 +131,14 @@ Two implementations, identical flow:
 - **abapGit** — git-based serialization/transport of *existing* objects. This builds objects *from source files* via ADT REST; a different job.
 - **SAP's official ADT-for-VS-Code MCP** (GA 2026) — ABAP Cloud only. This works against on-prem / any ADT-enabled system.
 - **Community ADT MCP servers** — wrap the ADT API for an agent. This is a dependency-free CLI you can drop straight into a script or pipeline.
+
+## Use it alongside
+
+adt-build owns the **build** step — create, activate, publish. It works standalone, but a real workflow usually wires it up like this:
+
+- An **AI agent** (e.g. Claude Code) calls the CLI to run builds: write source → `tools/abap` → read the result, in a loop.
+- For **read / inspect / run**, `abap probe` (system, package, transport) and `--run` (classrun) already cover a lot. To interactively read, edit, and unit-test objects, pair it with an **ADT MCP server** (community ADT MCPs, VSP, …) — adt-build builds, the MCP handles read/edit/test.
+- The raw-REST builder keeps working even when an MCP is blocked, so it doubles as an **MCP fallback**.
 
 ## Security
 
