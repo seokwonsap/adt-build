@@ -15,6 +15,9 @@ Nothing system-specific is defaulted: sap-client is omitted unless set (server u
 package & transport are validated (run `abap probe`), not guessed.
 """
 import os, re, sys, base64, argparse, urllib.request, urllib.parse, http.cookiejar, ssl
+# cross-platform: never crash on a Windows cp1252 console if output holds non-ASCII (e.g. SAP message text)
+try: sys.stdout.reconfigure(encoding='utf-8', errors='replace'); sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception: pass
 
 # ---- env ----
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -159,7 +162,7 @@ def csrf(op):
 def _err(body):
     for a, b in re.findall(r'<message[^>]*>([^<]*)</message>|<txt>([^<]*)</txt>', body or ''):
         m = (a or b).strip()
-        if m and 'cancelled' not in m.lower(): print('   ✗', m)
+        if m and 'cancelled' not in m.lower(): print('   !', m)
 def build(t, name, src=None, group=None, srvd=None, run=False):
     s = TYPES[t]; nl = name.lower(); mode = s.get('mode', 'src')
     coll = s['coll'] or f"/sap/bc/adt/functions/groups/{(group or '').lower()}/fmodules"
@@ -177,7 +180,7 @@ def build(t, name, src=None, group=None, srvd=None, run=False):
             out.append(f'lock FAILED (http={lst})'); print('  '.join(out)); _err(lb); return
         if mode == 'xml': purl, pct = q(obj, lockHandle=lh, corrNr=TR), s['media']
         else:             purl, pct = q(obj + '/source/main', lockHandle=lh, corrNr=TR), 'text/plain; charset=utf-8'
-        st, pb, _ = req(A, 'PUT', purl, data=open(src, 'rb').read(), token=csrf(A), ct=pct)
+        st, pb, _ = req(A, 'PUT', purl, data=open(src, 'rb').read().replace(b'\r\n', b'\n'), token=csrf(A), ct=pct)
         out.append(f"put {st}")
         if st >= 400: _err(pb)
         req(A, 'POST', q(obj, _action='UNLOCK', lockHandle=lh), token=csrf(A))
@@ -212,7 +215,7 @@ def probe(pkg=None):
     print(f"connect  : discovery http={st}  ({'ok' if st and st < 300 else 'AUTH or URL problem'})")
     pkg = pkg or PKG
     if not pkg:
-        print("package  : (none set — SAP_PACKAGE / --package)")
+        print("package  : (none set - SAP_PACKAGE / --package)")
     else:
         st, pb, _ = req(op, 'GET', q('/sap/bc/adt/packages/' + pkg.lower()))
         if st == 404:
@@ -227,7 +230,7 @@ def probe(pkg=None):
         else:
             print(f"package  : {pkg}  http={st}")
     if not TR:
-        print("transport: (none set — required only for transportable packages)")
+        print("transport: (none set - required only for transportable packages)")
     else:
         st, tb, _ = req(op, 'GET', q('/sap/bc/adt/cts/transportrequests/' + TR))
         if st and st < 300:
@@ -256,7 +259,7 @@ def main():
     if a.file and not t:
         txt = open(a.file, encoding='utf-8', errors='replace').read()
         t = detect(a.file, txt)
-        if not t: sys.exit(f"could not detect type from {a.file} — pass --type")
+        if not t: sys.exit(f"could not detect type from {a.file} - pass --type")
         if not name:
             nr = TYPES[t].get('name_re')
             if nr:

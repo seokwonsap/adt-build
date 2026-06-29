@@ -113,6 +113,8 @@ Two implementations, identical flow:
 - **`tools/abap`** — Python, primary. Auto-detection + a type registry, standard library only.
 - **`tools/build.sh`** — bash/curl, the transparent reference & fallback: `build.sh <type> <NAME> <src>`.
 
+**Platforms.** `tools/abap` is pure Python standard library (no `pip`, no `curl`, no platform-specific calls) — it runs on macOS, Linux, and Windows. On Windows run `py tools\abap ...`, or use the bundled `abap.cmd` so `abap ...` works (it falls back to `python` if the `py` launcher is absent). `tools/build.sh` is Unix only (bash + curl — use WSL or Git Bash on Windows). Verified on macOS; Windows is supported by design (stdlib-only) but not yet tested on a Windows host.
+
 ## Compared to other tools
 
 - **abapGit** — git-based serialization/transport of *existing* objects. This builds objects *from source files* via ADT REST; a different job.
