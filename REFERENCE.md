@@ -4,6 +4,16 @@ Technical notes behind `tools/abap` / `tools/build.sh`. These are the things tha
 
 **Verified on** ABAP Platform 2023 (release 758, A4H developer edition). The endpoints and the build flow are stable across releases; the **media-type version numbers below are what this system accepts** — on a different release a versioned guess can return `415`, in which case pull the exact (often unversioned) media type from discovery (see the note under the table).
 
+## Before you build a tool like this (read this first)
+
+If your goal is an AI developing ABAP against an on-premise system, **a full ADT-REST MCP server already exists and is a strict superset of this**: [VSP / vibing-steampunk](https://github.com/oisee/vibing-steampunk) does create/activate/publish *and* read/edit/search/test/debug/analyze. Don't rebuild that.
+
+- **Real development → use VSP** (or any full ADT MCP). A minimal single-file CLI cannot compete on breadth and shouldn't try.
+- **The only niche a minimal CLI earns** is a single-file, no-MCP, no-binary, *auditable-in-one-read* build+verify step — for CI, air-gapped/locked-down environments, an MCP fallback, or when a security team must read exactly what writes to SAP before allowing an AI to. That is the whole reason `tools/abap` exists.
+- Neighbours: **erpl-adt** (DataZooDE, C++ binary CLI+MCP) is the closest sibling — has ABAP Unit/ATC, but no RAP→OData V4 E2E and no source auto-detect. **SAP's official** ADT-for-VS-Code + ABAP MCP (GA Sapphire 2026) reaches on-prem via **RFC** and its MCP leans ABAP-Cloud/RAP.
+
+The genuinely reusable part below is **the raw ADT-REST flow and its undocumented traps**. SAP does not publish the ADT REST API, so the request shapes and gotchas here were found by trial against a live system — that is what is worth copying, not the wrapper.
+
 ## Build flow
 
 All object creation goes through the same sequence (the tool does this for you). Every request carries `X-sap-adt-sessiontype: stateful` so the server keeps session state across lock/PUT/unlock.
@@ -93,3 +103,40 @@ The principle: anything that varies by system is discovered or asked, never bake
 - **ABAP Unit** — `POST /sap/bc/adt/abapunit/testruns` with an object-references body → `<aunit:runResult>` (mind the empty-result trap above).
 - **ATC** — `POST /sap/bc/adt/atc/runs` (multi-step: configure worklist → run → fetch findings) for static checks; returns `atc:finding` elements.
 - **Debug** — pass `--verbose` to dump the raw server response body when an error comes back with an empty message (non-XML JSON/HTML error bodies).
+
+## Verify loop — exact recipes & traps (the part SAP doesn't document)
+
+`tools/abap --test/--atc/--doc` run these right after activate and fold the result into one exit code: **0** pass · **1** compile/activate · **2** ABAP Unit · **3** ATC (`--atc-max-prio`, default 2 → P1+P2 gate, P3 advisory; `--doc` never gates). `activationExecuted="false"` with **no** `type="E"` message = unchanged source = pass (not a failure).
+
+### ABAP Unit — `POST /sap/bc/adt/abapunit/testruns`
+- `Content-Type` **and** `Accept`: **`application/*`** (wildcards sidestep the config↔result media-version pairing, which is inconsistent across releases).
+- Body — ⚠ `<options>` and its children are **UNqualified (no `aunit:` prefix)**. A namespaced `<aunit:options>` is silently ignored and the server returns a schema-valid but **empty `<aunit:runResult/>`** that ran nothing (reads as green):
+
+```xml
+<aunit:runConfiguration xmlns:aunit="http://www.sap.com/adt/aunit">
+  <external><coverage active="false"/></external>
+  <options>
+    <uriType value="semantic"/>
+    <testRiskLevels harmless="true" dangerous="true" critical="true"/>
+    <testDurations short="true" medium="true" long="true"/>
+  </options>
+  <adtcore:objectSets xmlns:adtcore="http://www.sap.com/adt/core">
+    <objectSet kind="inclusive"><adtcore:objectReferences>
+      <adtcore:objectReference adtcore:uri="/sap/bc/adt/oo/classes/<name>"/>
+    </adtcore:objectReferences></objectSet>
+  </adtcore:objectSets>
+</aunit:runConfiguration>
+```
+
+- ⚠ **Empty `<runResult/>` ≠ pass.** A bogus object URI *and* a whole-package run both return the same empty result. Distinguish by `<program>`: **no `<program>` = nothing ran** (report "no tests", never "passed"). A pass lists `<program><testClasses><testClass><testMethods><testMethod>`; a failure adds `<alert kind="failedAssertion|runtimeAbortion" severity="critical|fatal"><title>` (line in the alert's `…#start=<line>`). Parse alerts across the whole body so a setup dump (program-level `runtimeAbortion`, 0 methods) is caught as fail, not green.
+
+### ATC — 3-step worklist flow
+1. `GET /sap/bc/adt/atc/customizing` → property `name="systemCheckVariant"` `value="…"` (default variant; attribute order varies).
+2. `POST /sap/bc/adt/atc/worklists?checkVariant=<v>` with `Accept: text/plain` → a 32-hex worklist id.
+3. `POST /sap/bc/adt/atc/runs?worklistId=<id>` (`application/xml`), body `<atc:run maximumVerdicts="100"><objectSets …><objectSet kind="inclusive"><adtcore:objectReferences><adtcore:objectReference adtcore:uri="…"/>…`. The reply carries `FINDING_STATS` = `p1,p2,p3` priority counts (the authoritative total).
+4. `GET /sap/bc/adt/atc/worklists/<id>?includeExemptedFindings=false` for finding detail (`priority` / `checkTitle` / `messageTitle` / `location#…start=<line>`). ⚠ the worklist **lists each finding more than once** — dedup by (message, line); use `FINDING_STATS` for the count, not the number of finding elements.
+
+### ABAP documentation
+- **ABAP Doc** (`"!` comments above declarations) is plain source content — write it with the normal `/source/main` PUT, no separate object. `--doc` is a read-only coverage report (which public methods lack `"!`), deliberately **not** an auto-stub generator (empty stubs are noise).
+- **Knowledge Transfer Documents (KTD)** = the standalone doc object, registered for **DDLS/BDEF/SRVD/SRVB/DEVC** (not classes/interfaces/programs): `/sap/bc/adt/documentation/ktd/documents/{name}`, media `application/vnd.sap.adt.sktdv2+xml` **only** (JSON is advertised in discovery but returns 500), markdown base64-encoded inside `<sktd:text>` within a multi-element `<sktd:docu>` envelope. ⚠ **Write not executed in this work** — read confirmed (real KTDs GET 200 with an ETag + the discovery template carries `lockHandle/version/corrNr/_action`), so a lock→PUT(`If-Match` ETag)→activate cycle is expected, but verify before relying on it.
+- **Not headless-writable over ADT REST:** classic SE61/DOKU object longtext, data-element doc bodies, message-class longtext — these render via GET only; editing is GUI/RFC (e.g. the DOKU API), out of ADT-REST scope.
