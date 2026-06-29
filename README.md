@@ -2,6 +2,8 @@
 
 **English** · [한국어](README.ko.md)
 
+> **Headless ABAP object builder via the ADT REST API — built for AI-driven ABAP development ("vibe coding") on on-premise SAP systems, where the official Cloud-only tooling doesn't yet reach.**
+
 A headless CLI tool to build and activate ABAP objects directly from source files using the ADT REST API—no Eclipse, no SAP GUI required.
 
 With a single command, adt-build automatically detects the object's type and name, then handles the entire lifecycle: Create → Lock → Upload Source → Activate. It can even execute classruns or publish service bindings over HTTP(S). It supports 16 ABAP object types, including everything needed to expose a RAP service as a live OData V4 endpoint.
@@ -22,6 +24,8 @@ The standard way to create and activate ABAP objects is via Eclipse ADT or SAP G
 - Get things done with zero heavy installations (requires only Python 3 and standard libraries).
 
 Under the hood, ADT is just a REST API. This tool interacts with it directly, abstracting away the undocumented quirks and per-object complexities—such as media types, creation payloads, service-binding publish steps, and RAP mass-activations. (For deep technical details, see [REFERENCE.md](REFERENCE.md)).
+
+**Sweet spot: on-premise AS ABAP.** SAP's official ADT-for-VS-Code / MCP tooling targets ABAP Cloud, so for an AI agent creating and activating objects on an on-premise system, this is still about the only "write" primitive — no Eclipse, no Cloud, no MCP required.
 
 ## Installation
 
