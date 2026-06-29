@@ -4,16 +4,17 @@
 
 ![adt-build — Headless ABAP Object Builder via the ADT REST API](assets/banner.jpg)
 
-> **Headless ABAP object builder via the ADT REST API — built for AI-driven ABAP development ("vibe coding") on on-premise SAP systems, where the official Cloud-only tooling doesn't yet reach.**
+> **Headless ABAP object builder via the ADT REST API — built for AI-driven ABAP development ("vibe coding") on on-premise SAP systems, reached over plain ADT REST + basic auth. Build, activate, publish, and verify (ABAP Unit · ATC · ABAP Doc) — no Eclipse, no binary, no MCP.**
 
 A headless CLI tool to build and activate ABAP objects directly from source files using the ADT REST API—no Eclipse, no SAP GUI required.
 
-With a single command, adt-build automatically detects the object's type and name, then handles the entire lifecycle: Create → Lock → Upload Source → Activate. It can even execute classruns or publish service bindings over HTTP(S). It supports 16 ABAP object types, including everything needed to expose a RAP service as a live OData V4 endpoint.
+With a single command, adt-build automatically detects the object's type and name, then handles the entire lifecycle: Create → Lock → Upload Source → Activate. It can even execute classruns, publish service bindings, and — unusual for a tool this small — close the **verify loop** right after activation: ABAP Unit (`--test`), ATC static checks (`--atc`), and ABAP Doc coverage (`--doc`), all over HTTP(S). It supports 16 ABAP object types, including everything needed to expose a RAP service as a live OData V4 endpoint.
 
 ```bash
 tools/abap zcl_demo.abap --run     # Detects: class ZCL_DEMO → creates, activates, and runs it
 tools/abap zi_orders.asddls        # Detects: CDS view ZI_ORDERS
 tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS   # OData V4 binding + auto-publish
+tools/abap zcl_demo.abap --test --atc --doc   # build, then ABAP Unit + ATC + ABAP Doc coverage
 ```
 
 ## 💡 Why adt-build?
@@ -27,7 +28,7 @@ The standard way to create and activate ABAP objects is via Eclipse ADT or SAP G
 
 Under the hood, ADT is just a REST API. This tool interacts with it directly, abstracting away the undocumented quirks and per-object complexities—such as media types, creation payloads, service-binding publish steps, and RAP mass-activations. (For deep technical details, see [REFERENCE.md](REFERENCE.md)).
 
-**Sweet spot: on-premise AS ABAP.** SAP's official ADT-for-VS-Code / MCP tooling targets ABAP Cloud, so for an AI agent creating and activating objects on an on-premise system, this is still about the only "write" primitive — no Eclipse, no Cloud, no MCP required.
+**Sweet spot: on-premise AS ABAP.** SAP's *official* ADT-for-VS-Code / MCP tooling targets ABAP Cloud, so it doesn't reach on-premise systems. Community tools do — notably the VSP MCP server, which can create, activate, and publish on-premise objects too. So adt-build isn't "the only way to write"; what it adds is *form factor*: a single dependency-free Python file (standard library only, no binary to install or vet, a few hundred lines you can read in one sitting) that an AI agent or a CI step can call directly — no Eclipse, no Cloud, no MCP required.
 
 ## 🚀 Installation
 
@@ -83,13 +84,19 @@ Simply run `tools/abap <file>`. The tool infers the object type from the file ex
 ### 🛠 Useful Flags
 
 - `--run`: Execute a class via classrun after activation.
+- `--test`: Run ABAP Unit on the object after activation (reports test methods + failures).
+- `--atc`: Run ATC static checks after activation (reports findings by priority).
+- `--doc`: Report ABAP Doc coverage of the public API (which methods still lack `"!` documentation).
 - `--group ZFG`: Specify the function group for a function module.
 - `--srvd ZX`: Specify the service definition for a service binding.
 - `--type` / `--name`: Override automatic detection, or use for objects without source files.
 - `--src`: Explicitly define the source file to upload.
 - `--host` / `--user` / `--client` / `--package` / `--transport`: Override variables defined in `.env`.
 - `--insecure`: Skip TLS certificate verification (for dev systems with self-signed certs).
+- `--atc-max-prio N`: ATC gate threshold — fail on findings at priority 1..N (default 2; P3 advisory).
 - `--verbose`: Dump the raw server response body on errors (helps debug non-XML error responses).
+
+**Exit codes** (CI / agent loops): `0` pass · `1` compile/activate · `2` ABAP Unit · `3` ATC — so an agent can `tools/abap x --test --atc && <next step>`. `--doc` is advisory (never gates). An `activationExecuted="false"` with **no** error message = unchanged source = **pass**, not a failure (the one A4H nuance the gate encodes).
 
 ### 🎯 Example: CDS View to Live OData V4 (End-to-End)
 
@@ -174,7 +181,7 @@ For every object, the tool executes the following lifecycle:
 
 Fetch CSRF token → POST create (stateful session) → LOCK → PUT source (or object XML) → UNLOCK → POST activate in a fresh session (since the lock/PUT rotates the token).
 
-Service bindings have an extra publish step, and classes optionally execute. Full per-type endpoints and media types are in [REFERENCE.md](REFERENCE.md).
+Service bindings have an extra publish step, and classes optionally execute. With `--test`/`--atc`/`--doc` it then runs ABAP Unit, ATC, and an ABAP Doc coverage check against the just-activated object — the same verify loop you'd run in Eclipse, headless. Full per-type endpoints and media types are in [REFERENCE.md](REFERENCE.md).
 
 **Two implementations:**
 
@@ -186,14 +193,27 @@ Service bindings have an extra publish step, and classes optionally execute. Ful
 adt-build intentionally focuses on one job: the build step (create, activate, publish). It works great standalone, but shines in automated workflows:
 
 - **AI Agents (e.g., Claude Code, Cursor):** An agent can write the source code, invoke the CLI to build it, and read the results in a continuous loop.
-- **Coupling with MCP Servers:** While `abap probe` and `--run` handle basic reading and execution, you can pair adt-build with a community ADT MCP server (like VSP) for an interactive read/edit/test workflow. adt-build handles the heavy lifting of building, while the MCP handles inspection.
+- **Coupling with MCP Servers:** A full ADT MCP server like VSP already does the whole lifecycle itself — create, activate, publish, *plus* read/edit/test/analyze/debug — so this isn't a division of labor where the MCP only inspects and adt-build builds; both can build. Pairing makes sense when you want a zero-install, no-MCP build step inside a script or CI loop while still driving interactive inspection through the MCP.
 - **MCP Fallback:** Even if an MCP server is blocked or unavailable, this raw REST CLI continues to work reliably.
 
-**Compared to Other Tools:**
+**Compared to other tools** — adt-build is *not* the most capable; it's the most minimal. Honest landscape:
 
-- **abapGit:** Designed for Git-based serialization and transport of existing objects. adt-build focuses on headless creation from local source files via REST.
-- **SAP's ADT-for-VS-Code MCP (GA 2026):** Restricted to ABAP Cloud environments. adt-build works against on-premise systems and any ADT-enabled environment.
-- **Community ADT MCP Servers:** These wrap the ADT API specifically for AI agents. adt-build is a dependency-free CLI built to be dropped directly into scripts or pipelines.
+| | **adt-build** | **VSP** (MCP) | **erpl-adt** | **SAP official** |
+|---|---|---|---|---|
+| Form | one stdlib `.py` file | Go binary, 147 tools | C++ binary (CLI+MCP) | VS Code ext + MCP |
+| Create / activate / publish | ✓ | ✓ | ✓ | ✓ |
+| RAP → live OData V4, one command | ✓ | ✓ | ✗ | cloud only |
+| Auto type + name from source | ✓ | — | ✗ (full URIs) | n/a |
+| Verify loop (Unit / ATC / Doc) | ✓ | ✓ (Unit/ATC) | ✓ (Unit/ATC) | ✓ |
+| On-prem, basic auth, no binary | ✓ | binary | binary | RFC |
+| One file you can audit in a sitting | ✓ | ✗ | ✗ | ✗ |
+
+- **abapGit** serializes and transports *existing* objects via Git; adt-build *creates* from local source via REST. Different jobs.
+- **SAP's official ADT-for-VS-Code + ABAP MCP** (GA, Sapphire 2026) is the heavyweight: the extension reaches on-premise via **RFC** and cloud via HTTP, and its MCP leans ABAP-Cloud/RAP. adt-build reaches on-premise over plain **ADT REST / HTTP + basic auth** — which works through a forwarded port where RFC won't.
+- **VSP** is a functional **superset**: it does everything adt-build does and far more (read/edit/debug/analyze, 147 tools). Want one AI workbench? Use VSP.
+- **erpl-adt** is the closest sibling — a headless CLI with no Eclipse/RFC/JVM, and it has ABAP Unit + ATC too — but it ships as a compiled binary, wants full object URIs, and doesn't do RAP → OData V4 end-to-end.
+
+**The pitch isn't features — it's form.** adt-build is the small, hand-checked, *fun* one: standard-library Python you can read end to end, drop into any script, and hand to a security team as "here's the whole thing, all of it." Not a slop generator — a primitive. Pair it with VSP (or any MCP) for interactive work; reach for adt-build when you want a build-and-verify step that's auditable and has nothing to install.
 
 ## 🛡️ Security
 
