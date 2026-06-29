@@ -1,5 +1,7 @@
 # adt-build
 
+**English** · [한국어](README.ko.md)
+
 Build ABAP objects **headless from source files** via the ADT REST API — no Eclipse, no SAP GUI. One command auto-detects the object's type and name, then creates → locks → PUTs source → activates (and publishes / runs) over plain HTTP(S). **16 object types**, including a full RAP service exposed as a **live OData V4 endpoint**.
 
 ```bash
