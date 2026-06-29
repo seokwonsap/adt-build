@@ -5,7 +5,9 @@
 > **ADT REST API로 ABAP 객체를 헤드리스(Headless)로 빌드합니다.**
 > 공식 툴(ABAP Cloud 전용)이 아직 닿지 않는 온프레미스 SAP 환경에서, AI 기반 ABAP 개발(이른바 '바이브 코딩')을 구현하기 위해 만들었습니다.
 
+
 <img width="1536" height="1024" alt="ChatGPT Image 2026년 6월 29일 오후 03_58_21" src="https://github.com/user-attachments/assets/1c9a6abf-c476-40f0-92d4-9ecfee11e1cf" />
+
 
 Eclipse나 SAP GUI 없이, 소스 파일 하나만으로 ABAP 객체를 생성하고 활성화할 수 있는 도구입니다. ADT REST API를 직접 호출하기 때문에 명령어 한 줄이면 객체 타입과 이름을 자동으로 파악합니다. 생성, 잠금(Lock), 소스 업로드, 활성화는 물론 필요한 경우 Publish나 실행(Run)까지 한 번에 처리합니다.
 
