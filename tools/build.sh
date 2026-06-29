@@ -7,7 +7,7 @@
 #
 # Config — all from ../.env (gitignored), nothing system-specific hardcoded:
 #   SAP_URL · SAP_USER · SAP_PASSWORD · SAP_PACKAGE  (required)
-#   SAP_CLIENT (default 001) · SAP_TRANSPORT (optional; omit = no corrNr, for local/non-transportable pkgs).
+#   SAP_CLIENT (optional; omitted = server logon default) · SAP_TRANSPORT (optional; omit = no corrNr, local pkgs).
 # `tools/abap` is the primary (auto-detect) builder; this bash engine is the transparent reference/fallback.
 set -uo pipefail
 
@@ -17,7 +17,8 @@ B="${SAP_URL:-${SAP_BUILD_URL:?set SAP_URL=http://host:port in .env}}"
 U="${SAP_USER:?set SAP_USER in .env}:${SAP_PASSWORD:?set SAP_PASSWORD in .env}"
 PKG="${SAP_PACKAGE:?set SAP_PACKAGE in .env}"
 TR="${SAP_TRANSPORT:-}"; CORR=""; [ -n "$TR" ] && CORR="${CORR}"
-C="sap-client=${SAP_CLIENT:-001}"; ST='X-sap-adt-sessiontype: stateful'
+C=""; [ -n "${SAP_CLIENT:-}" ] && C="sap-client=$SAP_CLIENT"   # unset -> omit, server uses logon default client
+ST='X-sap-adt-sessiontype: stateful'
 
 [ $# -ge 2 ] || { echo "usage: build.sh <class|prog|cds|tabl|doma|dtel|intf|fugr|fm|stru|typegrp|xslt|dcl|bdef|srvd|srvb> <NAME> [src_file] [run]   (fm: FUGR=<group> env; srvb: SRVD=<def> env)"; exit 2; }
 TYPE="$1"; NAME="$2"; SRC="${3:-}"; RUN="${4:-}"

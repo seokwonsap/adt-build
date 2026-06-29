@@ -77,6 +77,29 @@ tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS  # binding + auto-
 # → GET /sap/opu/odata4/sap/zui_orders_o4/srvd/sap/zui_orders/0001/Orders  returns live JSON
 ```
 
+## Discover, don't assume
+
+System-specific values vary per system (port, client, package, transport). The tool never hardcodes or silently defaults them:
+
+- **port** is part of `SAP_URL` — yours, whatever it is.
+- **client** is omitted unless you set `SAP_CLIENT`; the server then uses your logon default.
+- **package / transport** are validated against the system, not guessed.
+
+`abap probe` shows exactly what the tool will talk to before you build:
+
+```
+$ abap probe
+host     : https://your-host:50001
+user     : DEVELOPER
+client   : (omitted -> server logon default)
+connect  : discovery http=200  (ok)
+package  : ZLOCAL  exists (type=DEVC/K, responsible=DEVELOPER, softwareComponent=HOME)
+           -> TRANSPORTABLE: a transport request is required
+transport: ABCK900123  [Modifiable] owner=DEVELOPER
+```
+
+When something is ambiguous — which package, which transport — confirm it rather than assume. For AI-driven use: **probe first, surface the values, ask the user when unsure, then build with explicit values.**
+
 ## How it works
 
 Per object: fetch a CSRF token → `POST` create (stateful session) → `LOCK` → `PUT` source (or object XML) → `UNLOCK` → `POST` activate in a **fresh session** (lock/PUT rotate the token). Service bindings additionally publish; classes optionally run. Full per-type endpoints, media types, and gotchas: **[REFERENCE.md](REFERENCE.md)**.

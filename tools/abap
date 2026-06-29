@@ -7,9 +7,12 @@ abap — one smart command to build any ABAP object headless via raw ADT REST.
   abap <file> --group ZFG      # function module: target group
   abap --type fugr --name ZFG_DEMO          # no-source types (fugr)
   abap --type srvb --name ZX_O4 --srvd ZX   # service binding (+auto publish)
+  abap probe                   # report the real host/client/package/transport — discover, don't assume
 
 One CLI for 16 object types. Logic lives in the TYPES registry (data) + one engine.
 Config from ../.env: SAP_URL, SAP_USER, SAP_PASSWORD, SAP_PACKAGE (SAP_CLIENT/SAP_TRANSPORT optional). See README.md.
+Nothing system-specific is defaulted: sap-client is omitted unless set (server uses the logon default);
+package & transport are validated (run `abap probe`), not guessed.
 """
 import os, re, sys, base64, argparse, urllib.request, urllib.parse, http.cookiejar, ssl
 
@@ -33,7 +36,7 @@ def configure(a=None):
     B_URL  = (a and a.host) or g('SAP_URL') or g('SAP_BUILD_URL') or sys.exit('set SAP_URL=http://host:port (.env or --host)')
     USER   = (a and a.user) or g('SAP_USER') or sys.exit('set SAP_USER (.env or --user)')
     PW     = g('SAP_PASSWORD') or sys.exit('set SAP_PASSWORD (.env)')
-    CLIENT = (a and a.client) or g('SAP_CLIENT', '001')
+    CLIENT = (a and a.client) or g('SAP_CLIENT')   # unset -> sap-client omitted (server uses logon default)
     PKG    = (a and a.package) or g('SAP_PACKAGE') or sys.exit('set SAP_PACKAGE (.env or --package)')
     TR     = (a and a.transport) or g('SAP_TRANSPORT', '')   # empty = omit corrNr (local/non-transportable pkg)
     AUTH   = 'Basic ' + base64.b64encode(f'{USER}:{PW}'.encode()).decode()
@@ -130,7 +133,8 @@ def opener():
                                        urllib.request.HTTPSHandler(context=_ctx))
 def q(path, **p):
     p = {k: v for k, v in p.items() if v not in (None, '')}   # drop empty params (e.g. corrNr when no transport)
-    p['sap-client'] = CLIENT
+    if CLIENT: p['sap-client'] = CLIENT                       # unset -> omit; server uses the logon default client
+    if not p: return path
     return path + ('&' if '?' in path else '?') + urllib.parse.urlencode(p)
 def req(op, method, path, data=None, token=None, ct=None, accept=None, _try=2):
     h = {'Authorization': AUTH, 'X-sap-adt-sessiontype': 'stateful', 'Accept': accept or '*/*'}
@@ -194,6 +198,43 @@ def build(t, name, src=None, group=None, srvd=None, run=False):
         _, rb, _ = req(B, 'POST', q(f'/sap/bc/adt/oo/classrun/{nl}'), token=csrf(B), accept='text/plain')
         print('--- RUN ---'); print(rb)
 
+# ---- probe: discover, don't assume ----
+def probe(pkg=None):
+    op = opener()
+    def g1(body, rx, d='?'):
+        m = re.search(rx, body); return m.group(1) if m else d
+    print(f"host     : {B_URL}")
+    print(f"user     : {USER}")
+    print(f"client   : {CLIENT or '(omitted -> server logon default)'}")
+    st, *_ = req(op, 'GET', q('/sap/bc/adt/discovery'))
+    print(f"connect  : discovery http={st}  ({'ok' if st and st < 300 else 'AUTH or URL problem'})")
+    pkg = pkg or PKG
+    if not pkg:
+        print("package  : (none set — SAP_PACKAGE / --package)")
+    else:
+        st, pb, _ = req(op, 'GET', q('/sap/bc/adt/packages/' + pkg.lower()))
+        if st == 404:
+            print(f"package  : {pkg}  NOT FOUND")
+        elif st and st < 300:
+            typ = g1(pb, r'adtcore:type="([^"]*)"')
+            resp = g1(pb, r'adtcore:responsible="([^"]*)"')
+            swc = g1(pb, r'pak:softwareComponent pak:name="([^"]*)"', '')
+            kind = 'TRANSPORTABLE: a transport request is required' if typ == 'DEVC/K' else 'local: no transport needed'
+            print(f"package  : {pkg}  exists (type={typ}, responsible={resp}, softwareComponent={swc})")
+            print(f"           -> {kind}")
+        else:
+            print(f"package  : {pkg}  http={st}")
+    if not TR:
+        print("transport: (none set — required only for transportable packages)")
+    else:
+        st, tb, _ = req(op, 'GET', q('/sap/bc/adt/cts/transportrequests/' + TR))
+        if st and st < 300:
+            status, owner = g1(tb, r'tm:status_text="([^"]*)"'), g1(tb, r'tm:owner="([^"]*)"')
+            warn = '' if (status == 'Modifiable' and owner == USER) else '   <-- not modifiable or not owned by you'
+            print(f'transport: {TR}  [{status}] owner={owner}{warn}')
+        else:
+            print(f"transport: {TR}  http={st} (not found?)")
+
 # ---- cli ----
 def main():
     ap = argparse.ArgumentParser(description='Build any ABAP object headless (auto type+name).')
@@ -206,6 +247,8 @@ def main():
     ap.add_argument('--client'); ap.add_argument('--package'); ap.add_argument('--transport')
     a = ap.parse_args()
     configure(a)
+    if a.file == 'probe':
+        probe(a.package); return
     t, name, src = a.type, a.name, a.src or a.file
     if a.file and not t:
         txt = open(a.file, encoding='utf-8', errors='replace').read()

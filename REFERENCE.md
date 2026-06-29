@@ -38,6 +38,17 @@ All object creation goes through the same sequence (the tool does this for you):
 
 All endpoints are under `/sap/bc/adt`. Media types are under `application/vnd.sap.adt.`. "Mode" — *source*: text → `…/source/main`; *object-XML*: full object XML → object URI; *create-only*: no source PUT.
 
+## Discovering system values (instead of hardcoding)
+
+Port/client/package/transport differ per system, so the tool reads or probes them rather than assuming. `abap probe` uses these read-only endpoints:
+
+- **Client** — `sap-client` is a query param. Omit it and the server uses the logon default client (verified: `GET …/discovery` without `sap-client` → 200). So the tool omits it unless `SAP_CLIENT` is set.
+- **Package** — `GET /sap/bc/adt/packages/<name>` returns 404 if it doesn't exist, else `adtcore:type` (`DEVC/K` = transportable, needs a transport; otherwise local), `adtcore:responsible`, and `pak:softwareComponent`. Use it to validate the target before building.
+- **Transport** — `GET /sap/bc/adt/cts/transportrequests/<id>` returns `tm:status_text` (`Modifiable` = open, `Released` = closed), `tm:owner`, `tm:type` (`K` workbench / `W` customizing), `tm:target`. Use it to confirm a transport is open and yours before writing to it.
+- **Host/port** come entirely from `SAP_URL`.
+
+The principle: anything that varies by system is discovered or asked, never baked in.
+
 ## Gotchas
 
 - **Send an `Accept` header.** Several endpoints (class/domain PUT, `publishjobs`) reject a request with *"Accept header missing"*. `curl` sends `*/*` by default; raw HTTP clients (e.g. Python `urllib`) do not — set it explicitly.
