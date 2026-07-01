@@ -85,7 +85,7 @@ Simply run `tools/abap <file>`. The tool infers the object type from the file ex
 
 - `--run`: Execute a class via classrun after activation.
 - `--test`: Run ABAP Unit on the object after activation (reports test methods + failures).
-- `--atc`: Run ATC static checks after activation (reports findings by priority).
+- `--atc`: Run ATC static checks after activation, and grade the result into a **Clean Core Level A–D** (worst finding: P1→D · P2→C · P3→B · none→A).
 - `--doc`: Report ABAP Doc coverage of the public API (which methods still lack `"!` documentation).
 - `--group ZFG`: Specify the function group for a function module.
 - `--srvd ZX`: Specify the service definition for a service binding.
@@ -94,6 +94,7 @@ Simply run `tools/abap <file>`. The tool infers the object type from the file ex
 - `--host` / `--user` / `--client` / `--package` / `--transport`: Override variables defined in `.env`.
 - `--insecure`: Skip TLS certificate verification (for dev systems with self-signed certs).
 - `--atc-max-prio N`: ATC gate threshold — fail on findings at priority 1..N (default 2; P3 advisory).
+- `--atc-variant NAME`: ATC check variant to run (default: the system-configured variant, validated to exist first — an unknown variant otherwise silently falls back to a weaker check set). Env: `ABAP_ATC_VARIANT`.
 - `--verbose`: Dump the raw server response body on errors (helps debug non-XML error responses).
 
 **Exit codes** (CI / agent loops): `0` pass · `1` compile/activate · `2` ABAP Unit · `3` ATC — so an agent can `tools/abap x --test --atc && <next step>`. `--doc` is advisory (never gates). An `activationExecuted="false"` with **no** error message = unchanged source = **pass**, not a failure (the one A4H nuance the gate encodes).

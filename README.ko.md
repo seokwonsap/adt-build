@@ -88,7 +88,7 @@ SAP_TRANSPORT=            # 로컬($TMP) 패키지인 경우 비워둡니다.
 
 - `--run`: 클래스를 classrun으로 실행합니다.
 - `--test`: 활성화 후 ABAP Unit을 실행합니다. (테스트 메서드 수 + 실패 보고)
-- `--atc`: 활성화 후 ATC 정적 검사를 실행합니다. (우선순위별 findings 보고)
+- `--atc`: 활성화 후 ATC 정적 검사를 실행하고, 결과를 **Clean Core 등급 A–D**로 환산합니다. (최악 finding: P1→D · P2→C · P3→B · 없음→A)
 - `--doc`: public API의 ABAP Doc 커버리지를 보고합니다. (어떤 메서드에 `"!` 문서가 없는지)
 - `--group ZFG`: 함수 모듈이 속할 함수 그룹을 지정합니다.
 - `--srvd ZX`: 서비스 바인딩 생성 시 사용할 서비스 정의를 명시합니다.
@@ -97,6 +97,7 @@ SAP_TRANSPORT=            # 로컬($TMP) 패키지인 경우 비워둡니다.
 - `--host` / `--user` / `--client` / `--package` / `--transport`: `.env` 파일의 설정을 덮어씁니다.
 - `--insecure`: TLS 인증서 검증을 생략합니다. (Self-signed 인증서를 쓰는 개발 환경 전용)
 - `--atc-max-prio N`: ATC 게이트 임계값 — priority 1..N findings에서 실패 처리 (기본 2; P3는 advisory).
+- `--atc-variant NAME`: 사용할 ATC 체크 variant 지정 (기본값은 시스템 설정 variant이며 실존 여부를 먼저 검증 — 없는 variant는 서버가 조용히 약한 fallback으로 돌려 가짜 clean이 나오기 때문). 환경변수 `ABAP_ATC_VARIANT`.
 - `--verbose`: 에러 발생 시 서버의 원본 응답 바디를 출력합니다. (XML이 아닌 에러를 디버깅할 때 유용)
 
 **Exit code** (CI / 에이전트 루프): `0` 통과 · `1` compile/activate · `2` ABAP Unit · `3` ATC — 그래서 에이전트가 `tools/abap x --test --atc && <다음 단계>`로 분기할 수 있습니다. `--doc`는 advisory(게이트 안 함). `activationExecuted="false"`라도 에러 메시지가 **없으면** 동일 소스 = **통과**이지 실패가 아닙니다 (게이트가 내장한 A4H 뉘앙스).

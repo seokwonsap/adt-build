@@ -205,11 +205,23 @@ def _aunit(op, obj):  # run ABAP Unit on an object URI, print a pass/fail summar
         return False
     print(f'  test: {len(methods)} methods, all passed')
     return True
-def _atc(op, obj, max_prio=2):  # run ATC; gate on findings at priority 1..max_prio (P3 advisory). returns True/False/None
-    _, cb, _ = req(op, 'GET', q('/sap/bc/adt/atc/customizing'), accept='application/*')
-    m = (re.search(r'name="systemCheckVariant"[^>]*value="([^"]*)"', cb or '')
-         or re.search(r'value="([^"]*)"[^>]*name="systemCheckVariant"', cb or ''))
-    variant = m.group(1) if m else ''
+def _cc_level(p1, p2, p3):  # Clean Core level = worst ATC finding: P1 Error→D, P2 Warning→C, P3 Info→B, none→A
+    if p1: return 'D', 'Not Clean — blocks cloud readiness'
+    if p2: return 'C', 'Conditionally Clean — internal/undocumented APIs'
+    if p3: return 'B', 'Pragmatically Clean — documented extension points'
+    return 'A', 'Fully Clean'
+def _atc(op, obj, max_prio=2, variant=None):  # run ATC; gate on findings at priority 1..max_prio (P3 advisory). returns True/False/None
+    if variant:   # explicit --atc-variant: the run silently accepts an unknown variant (server falls back to a weaker check set → misleadingly clean grade), so confirm it exists first
+        variant = variant.upper()
+        vst, _, _ = req(op, 'GET', q(f'/sap/bc/adt/atc/checkvariants/{variant}'), accept='application/*')
+        if vst != 200:
+            print(f"  atc: check variant '{variant}' not found (HTTP {vst}) — falling back to the system-configured variant")
+            variant = None
+    if not variant:   # default: the system-configured variant (--atc-variant/ABAP_ATC_VARIANT overrides; it must exist — e.g. ZABAP_CLOUD_DEVELOPMENT on A4H, not the AWS-repo CLEAN_CORE)
+        _, cb, _ = req(op, 'GET', q('/sap/bc/adt/atc/customizing'), accept='application/*')
+        m = (re.search(r'name="systemCheckVariant"[^>]*value="([^"]*)"', cb or '')
+             or re.search(r'value="([^"]*)"[^>]*name="systemCheckVariant"', cb or ''))
+        variant = m.group(1) if m else ''
     if not variant: print('  atc: could not resolve system check variant'); return None
     _, wl, _ = req(op, 'POST', q('/sap/bc/adt/atc/worklists', checkVariant=variant),
                    token=csrf(op), accept='text/plain')
@@ -227,12 +239,17 @@ def _atc(op, obj, max_prio=2):  # run ATC; gate on findings at priority 1..max_p
     sm = re.search(r'FINDING_STATS</[^>]*>\s*<[^>]*description>([^<]*)', rb or '')
     nums = [int(x) for x in re.findall(r'\d+', sm.group(1))] if sm else []
     total, gated = (sum(nums), sum(nums[:max_prio])) if nums else (None, None)
-    if total == 0: print('  atc: clean (0 findings)'); return True
+    if total == 0: print(f'  atc: clean (0 findings)  → Clean Core Level A (Fully Clean)  [variant {variant}]'); return True
     _, wb, _ = req(op, 'GET', q(f'/sap/bc/adt/atc/worklists/{wl}', includeExemptedFindings='false'), accept='application/*')
     finds = re.findall(r'<[\w:]*finding\b([^>]*)', wb or '')
+    if nums: p1, p2, p3 = (nums + [0, 0, 0])[:3]   # FINDING_STATS is ordered [P1, P2, P3]
+    else:                                          # no stats block → count priorities off the worklist findings
+        pr = [_attr(at, 'priority') for at in finds]; p1, p2, p3 = pr.count('1'), pr.count('2'), pr.count('3')
+    level, ldesc = _cc_level(p1, p2, p3)
     print(f'  atc: {total if total is not None else len(finds)} findings'
           + (f' (prio {sm.group(1)})' if sm else '')
-          + (f'  [gate P1-{max_prio}: {gated}]' if gated is not None else ''))
+          + (f'  [gate P1-{max_prio}: {gated}]' if gated is not None else '')
+          + f'  → Clean Core Level {level} ({ldesc})  [variant {variant}]')
     shown, seen = 0, set()   # the worklist can list each finding more than once → dedup by (message, line)
     for at in finds:
         msg = html.unescape(_attr(at, 'messageTitle') or _attr(at, 'checkTitle'))
@@ -271,7 +288,7 @@ def _doc(op, obj):  # report ABAP Doc ("!) coverage for a code object — verify
     print('  doc: ' + (', '.join(parts) if parts else 'no public API to document'))
     missing = [n for n, d in meths if not d]
     if missing: print('     undocumented: ' + ', '.join(missing[:15]) + (' …' if len(missing) > 15 else ''))
-def build(t, name, src=None, group=None, srvd=None, run=False, test=False, atc=False, doc=False, atc_max_prio=2):
+def build(t, name, src=None, group=None, srvd=None, run=False, test=False, atc=False, doc=False, atc_max_prio=2, atc_variant=None):
     s = TYPES[t]; nl = name.lower(); mode = s.get('mode', 'src')
     coll = s['coll'] or f"/sap/bc/adt/functions/groups/{(group or '').lower()}/fmodules"
     obj = f"{coll}/{nl}"
@@ -282,7 +299,7 @@ def build(t, name, src=None, group=None, srvd=None, run=False, test=False, atc=F
             _, rb, _ = req(B, 'POST', q(f'/sap/bc/adt/oo/classrun/{nl}'), token=csrf(B), accept='text/plain')
             print('--- RUN ---'); print(rb)
         if test and _aunit(B, obj) is False: rc = 2
-        if atc and _atc(B, obj, atc_max_prio) is False and rc == 0: rc = 3
+        if atc and _atc(B, obj, atc_max_prio, atc_variant) is False and rc == 0: rc = 3
         if doc and t in ('class', 'intf', 'prog', 'fm'): _doc(B, obj)
         return _verdict(rc)
     cre = s['cre'](name, group=group, srvd=srvd); rc = 0
@@ -303,18 +320,20 @@ def build(t, name, src=None, group=None, srvd=None, run=False, test=False, atc=F
         req(A, 'POST', q(obj, _action='UNLOCK', lockHandle=lh), token=csrf(A))
     act = (f'<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences {NS}>'
            f'<adtcore:objectReference adtcore:uri="{obj}" adtcore:type="{s["atype"]}" adtcore:name="{name}"/></adtcore:objectReferences>')
-    _, ab, _ = req(B, 'POST', q('/sap/bc/adt/activation', method='activate', preauditRequested='false'),
+    ast, ab, _ = req(B, 'POST', q('/sap/bc/adt/activation', method='activate', preauditRequested='false'),
                    data=act.encode(), token=csrf(B), ct='application/xml')
     m = re.search(r'activationExecuted="([^"]*)"', ab)
     out.append(f'activate={m.group(1) if m else "?"}')
     print('  '.join(out)); _err(ab)
-    if re.search(r'\btype="[EA]"', ab or ''): rc = 1   # E=error / A=abort in activation = compile/type failure ("false" with no E/A = benign no-op = ok)
+    if ast == 0 or ast >= 400: rc = 1   # the activation request itself failed (conn drop / 403 CSRF race / 423 lock / 5xx) — never a silent pass
+    if re.search(r'\btype="[EA]"', ab or ''): rc = 1   # E=error / A=abort in activation body = compile/type failure ("false" with no E/A = benign no-op = ok)
     if s.get('publish'):
         pub = (f'<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences {NS}>'
                f'<adtcore:objectReference adtcore:uri="{obj}" adtcore:type="SRVB/SVB" adtcore:name="{name}"/></adtcore:objectReferences>')
         st, pb, _ = req(B, 'POST', q('/sap/bc/adt/businessservices/odatav4/publishjobs', servicename=name, serviceversion='0001'),
                         data=pub.encode(), token=csrf(B), ct='application/xml')
         sm = re.search(r'<SHORT_TEXT>([^<]*)', pb)
+        if st == 0 or st >= 400 or not sm: rc = 1   # srvb publish must succeed; activation alone leaves the OData service 404 (REFERENCE)
         if sm: print('  publish:', sm.group(1))
         else:  print(f'  publish {st}:'); _err(pb)
     if run and s.get('run'):
@@ -322,7 +341,7 @@ def build(t, name, src=None, group=None, srvd=None, run=False, test=False, atc=F
         print('--- RUN ---'); print(rb)
     if rc == 0:   # verify only a cleanly-activated object (broken source can't be meaningfully tested)
         if test and _aunit(B, obj) is False: rc = 2
-        if atc and _atc(B, obj, atc_max_prio) is False and rc == 0: rc = 3
+        if atc and _atc(B, obj, atc_max_prio, atc_variant) is False and rc == 0: rc = 3
         if doc and t in ('class', 'intf', 'prog', 'fm'): _doc(B, obj)
     return _verdict(rc, show=bool(rc or test or atc))
 
@@ -375,6 +394,7 @@ def main():
     ap.add_argument('--atc', action='store_true', help='run ATC static checks after activate (verify loop)')
     ap.add_argument('--doc', action='store_true', help='report ABAP Doc coverage of the public API (verify loop)')
     ap.add_argument('--atc-max-prio', type=int, default=2, help='ATC gate: fail on findings at priority 1..N (default 2; P3 = advisory)')
+    ap.add_argument('--atc-variant', default=os.environ.get('ABAP_ATC_VARIANT'), help='ATC check variant to run (default: system-configured; e.g. CLEAN_CORE for real Clean Core A-D grading)')
     ap.add_argument('--host', help='SAP base URL (overrides SAP_URL)'); ap.add_argument('--user')
     ap.add_argument('--client'); ap.add_argument('--package'); ap.add_argument('--transport')
     ap.add_argument('--insecure', action='store_true', help='skip TLS cert verification (self-signed dev systems only)')
@@ -391,7 +411,11 @@ def main():
         if not name:
             nr = TYPES[t].get('name_re')
             if nr:
-                m = re.search(nr, txt, re.I)
+                # match on comment-filtered code (like detect's head) so a descriptive comment
+                # ("* this report prints ...") can't preempt the real declaration -> wrong object name
+                code = '\n'.join(l for l in txt.splitlines()
+                                 if l.strip() and not l.lstrip().startswith(('*', '"', '@', '//', '<?xml')))
+                m = re.search(nr, code, re.I)
                 name = m.group(1).upper() if m else None
             if not name:  # fallback: filename stem
                 name = os.path.splitext(os.path.basename(a.file))[0].upper()
@@ -400,7 +424,7 @@ def main():
     if t == 'fm' and not a.group: sys.exit("fm needs --group <GROUP>")
     if t == 'srvb' and not a.srvd: sys.exit("srvb needs --srvd <SERVICE_DEFINITION>")
     print(f"[{t}] {name}" + (f" in {a.group}" if a.group else "") + (f" -> {a.srvd}" if a.srvd else ""))
-    sys.exit(build(t, name, src=src, group=a.group, srvd=a.srvd, run=a.run, test=a.test, atc=a.atc, doc=a.doc, atc_max_prio=a.atc_max_prio) or 0)
+    sys.exit(build(t, name, src=src, group=a.group, srvd=a.srvd, run=a.run, test=a.test, atc=a.atc, doc=a.doc, atc_max_prio=a.atc_max_prio, atc_variant=a.atc_variant) or 0)
 
 if __name__ == '__main__':
     main()

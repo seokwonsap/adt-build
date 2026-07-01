@@ -104,10 +104,13 @@ WK="$(mktemp -d)"; JA="$WK/jA"; JB="$WK/jB"; trap 'rm -rf "$WK"' EXIT
 tok()  { curl -s -m 20 -u "$U" -c "$JA" -b "$JA" -H "$ST" -H 'X-CSRF-Token: Fetch' -D - -o /dev/null "$B/sap/bc/adt/discovery?$C" | awk 'tolower($1)=="x-csrf-token:"{print $2}' | tr -d '\r'; }
 tokf() { curl -s -m 20 -u "$U" -c "$JB" -b "$JB" -H 'X-CSRF-Token: Fetch' -D - -o /dev/null "$B/sap/bc/adt/discovery?$C" | awk 'tolower($1)=="x-csrf-token:"{print $2}' | tr -d '\r'; }
 
-# 1) CREATE (400 if it already exists — PUT below still updates the source)
+# 1) CREATE (400/409 if it already exists — PUT below still updates the source)
+RC=0
 echo "$CRE" > "$WK/cre.xml"; T=$(tok)
-echo -n "create $(curl -s -m 30 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" -H "Content-Type: $MEDIA" \
-  --data-binary @"$WK/cre.xml" "$B$COLL?${CORR}$C" -o /dev/null -w '%{http_code}') "
+CRC=$(curl -s -m 30 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" -H "Content-Type: $MEDIA" \
+  --data-binary @"$WK/cre.xml" "$B$COLL?${CORR}$C" -o "$WK/cre.out" -w '%{http_code}')
+echo -n "create $CRC "
+case "$CRC" in 4*|5*) grep -qi 'already exist' "$WK/cre.out" || RC=1;; esac   # "already exists" on rebuild is benign
 if [ "$MODE" != "createonly" ]; then   # FUGR = create + activate only (no user source/main)
 # 2) LOCK
 T=$(tok); LH=$(curl -s -m 20 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" \
@@ -117,23 +120,32 @@ T=$(tok); LH=$(curl -s -m 20 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" \
 # 3) PUT — text source/main for src types; whole object XML to the object URI for doma/dtel
 if [ "$MODE" = "xml" ]; then PUT_URL="$B$OBJ?lockHandle=$LH&${CORR}$C"; PUT_CT="$MEDIA"
 else PUT_URL="$B$OBJ/source/main?lockHandle=$LH&${CORR}$C"; PUT_CT="text/plain; charset=utf-8"; fi
-T=$(tok); echo -n "put $(curl -s -m 30 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" \
-  -H "Content-Type: $PUT_CT" --data-binary @"$SRC" -X PUT "$PUT_URL" -o /dev/null -w '%{http_code}') "
+tr -d '\r' < "$SRC" > "$WK/src.norm"   # normalize CRLF -> LF before upload (match tools/abap)
+T=$(tok); PRC=$(curl -s -m 30 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" \
+  -H "Content-Type: $PUT_CT" --data-binary @"$WK/src.norm" -X PUT "$PUT_URL" -o /dev/null -w '%{http_code}')
+echo -n "put $PRC "
+case "$PRC" in 4*|5*) RC=1;; esac
 # 4) UNLOCK
 T=$(tok); curl -s -m 20 -u "$U" -b "$JA" -H "$ST" -H "X-CSRF-Token: $T" \
   -X POST "$B$OBJ?_action=UNLOCK&lockHandle=$LH&$C" -o /dev/null
 fi
 # 5) ACTIVATE — fresh session + token (lock/PUT rotated the CSRF)
 printf '<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="%s" adtcore:type="%s" adtcore:name="%s"/></adtcore:objectReferences>' "$OBJ" "$ATYPE" "$NAME" > "$WK/act.xml"
-TB=$(tokf); A=$(curl -s -m 40 -u "$U" -b "$JB" -H "X-CSRF-Token: $TB" -H 'Content-Type: application/xml' \
-  --data-binary @"$WK/act.xml" "$B/sap/bc/adt/activation?method=activate&preauditRequested=false&$C")
-echo "activate $(echo "$A" | grep -oE 'activationExecuted="[^"]*"' | head -1)"
-echo "$A" | tr '>' '>\n' | grep -iE 'severity="error"|<txt' | sed -E 's/<[^>]*>//g' | grep . | head -8
+TB=$(tokf); ACODE=$(curl -s -m 40 -u "$U" -b "$JB" -H "X-CSRF-Token: $TB" -H 'Content-Type: application/xml' \
+  --data-binary @"$WK/act.xml" "$B/sap/bc/adt/activation?method=activate&preauditRequested=false&$C" -o "$WK/act.out" -w '%{http_code}')
+A=$(cat "$WK/act.out")
+echo "activate $(echo "$A" | grep -oE 'activationExecuted="[^"]*"' | head -1) (http=$ACODE)"
+echo "$A" | tr '>' '>\n' | grep -iE 'type="[EA]"|<txt' | sed -E 's/<[^>]*>//g' | grep . | head -8
+case "$ACODE" in 4*|5*|000) RC=1;; esac                       # activation request itself failed (conn/403/423/5xx)
+echo "$A" | grep -qE 'type="[EA]"' && RC=1                     # E=error / A=abort = compile/type failure (match tools/abap)
 # 5b) PUBLISH (srvb only) — make the OData V4 service live (activation alone leaves published=false)
 if [ "$TYPE" = "srvb" ]; then
   printf '<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="%s" adtcore:type="SRVB/SVB" adtcore:name="%s"/></adtcore:objectReferences>' "$OBJ" "$NAME" > "$WK/pub.xml"
   TP=$(tokf)
-  echo "publish $(curl -s -m 50 -u "$U" -b "$JB" -H "X-CSRF-Token: $TP" -H 'Content-Type: application/xml' --data-binary @"$WK/pub.xml" "$B/sap/bc/adt/businessservices/odatav4/publishjobs?servicename=$NAME&serviceversion=0001&$C" | grep -oE '<SHORT_TEXT>[^<]*' | sed 's/<SHORT_TEXT>//')"
+  PUB=$(curl -s -m 50 -u "$U" -b "$JB" -H "X-CSRF-Token: $TP" -H 'Content-Type: application/xml' --data-binary @"$WK/pub.xml" "$B/sap/bc/adt/businessservices/odatav4/publishjobs?servicename=$NAME&serviceversion=0001&$C")
+  STXT=$(echo "$PUB" | grep -oE '<SHORT_TEXT>[^<]*' | sed 's/<SHORT_TEXT>//')
+  echo "publish ${STXT:-<no SHORT_TEXT>}"
+  [ -n "$STXT" ] || RC=1   # publish must produce a job result; activation alone leaves the OData service 404
 fi
 # 6) RUN (class only — reports/CDS have no classrun)
 if [ "$RUN" = "run" ] && [ "$TYPE" = "class" ]; then
@@ -141,3 +153,4 @@ if [ "$RUN" = "run" ] && [ "$TYPE" = "class" ]; then
   curl -s -m 30 -u "$U" -b "$JB" -H "X-CSRF-Token: $TR2" -H 'Accept: text/plain' \
     -X POST "$B/sap/bc/adt/oo/classrun/$nl?$C"
 fi
+exit "${RC:-0}"   # non-zero on create/PUT/activation/publish failure (CI / agent loops) — matches tools/abap
