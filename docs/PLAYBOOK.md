@@ -3,7 +3,7 @@
 > 실제 바이브코딩 랩(SAP ABAP Platform 2023 / 758)의 운영 매뉴얼 — Eclipse·SAP GUI 없이 **ADT REST API만으로** ABAP을 빌드·검증한다. 세션이 초기화돼도 이 문서 + [`LEARNINGS.md`](LEARNINGS.md) 만 읽으면 바로 시니어처럼 붙는다.
 > "어떻게 개발하는가"는 여기, "어떤 함정을 밟았나"는 [`LEARNINGS.md`](LEARNINGS.md). 빌드는 이 repo 의 `abap` CLI 로.
 >
-> _(랩 내부 매뉴얼을 adt-build repo 로 추출한 것. 홈 IP/개인정보는 `<HOME_LAN_IP>`/`<PUBLIC_IP>` placeholder 로 치환됨. SAP 사용자명 `DEV001`/`DEVELOPER` 는 예시로 유지.)_
+> _⚙️ `sync-adt-build.sh` 로 랩 `DEVELOPING.md` 에서 자동 생성 — 직접 수정하지 말 것. 홈 IP/개인 경로는 placeholder 로 치환됨. SAP 사용자명 `DEV001`/`DEVELOPER` 는 예시로 유지._
 
 ---
 
@@ -181,9 +181,10 @@ curl -s -u "$SAP_USER:$SAP_PASSWORD" \
 
 ---
 
+
 ## 9. 관련 문서 (이 repo)
 
-- [`LEARNINGS.md`](LEARNINGS.md) — 함정/오류 카탈로그 (symptom → cause → fix, 핵심 deliverable)
+- [`LEARNINGS.md`](LEARNINGS.md) — 함정/오류 카탈로그 (symptom → cause → fix)
 - [시각 가이드 (라이브)](https://seokwonsap.github.io/adt-build/) — 다이어그램 있는 HTML 가이드
 - [`../README.md`](../README.md) · [`../REFERENCE.md`](../REFERENCE.md) — `abap` CLI 사용법·플래그·타입 레퍼런스
-- `../tools/abap` — **주력 빌더** (한 명령, 타입·이름 자동추론, 16종: class·prog·cds·tabl·doma·dtel·intf·fugr·fm·stru·typegrp·xslt·dcl·bdef·srvd·srvb; Python·urllib, 의존성 0). `../tools/build.sh <type> <NAME> [src]` — 동일 플로우의 bash 엔진/폴백. 소스형은 `source/main`에 텍스트 PUT, 객체 XML형(doma/dtel)은 객체 URI에 XML PUT. 새 타입 추가는 `tools/abap` 의 Python `TYPES` 레지스트리(dict)에 endpoint·media type·create 빌더를 추가.
+- `../tools/abap` — 주력 빌더 (16종, Python·urllib, 의존성 0) · `../tools/build.sh` bash 폴백

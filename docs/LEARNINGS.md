@@ -1,3 +1,5 @@
+> ⚙️ _Auto-synced from the lab's `LEARNINGS.md` by `sync-adt-build.sh` — do not hand-edit here; edit the lab source. Home IPs / personal paths are scrubbed to placeholders._
+
 # Vibe ABAP — Learnings & Gotcha Catalog
 
 Real problems hit while vibe-coding ABAP on **A4H** (ABAP Platform 2023 / 758) through
