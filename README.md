@@ -17,6 +17,14 @@ tools/abap --type srvb --name ZUI_ORDERS_O4 --srvd ZUI_ORDERS   # OData V4 bindi
 tools/abap zcl_demo.abap --test --atc --doc   # build, then ABAP Unit + ATC + ABAP Doc coverage
 ```
 
+## 📚 Guide & learnings
+
+Beyond the tool, this repo carries the field notes from a real ABAP vibe-coding lab — the *how* and the *gotchas* of building ABAP entirely over ADT REST:
+
+- **[docs/guide.html](docs/guide.html)** — a visual guide with diagrams (build flow, verify loop, object-type map, top 10 gotchas). Open it in a browser.
+- **[docs/PLAYBOOK.md](docs/PLAYBOOK.md)** — the operating manual: connectivity, the exact build recipe, the verify loop, per-type media types, and a proven-technique catalog.
+- **[docs/LEARNINGS.md](docs/LEARNINGS.md)** — the *symptom → cause → fix* catalog (dozens of entries, grouped A–P): VSP mechanics, RAP, OData V4, ABAP Unit, classic ABAP, DDIC, and a reusable utility library.
+
 ## 💡 Why adt-build?
 
 The standard way to create and activate ABAP objects is via Eclipse ADT or SAP GUI. However, these GUI-based tools become bottlenecks when you want to:
