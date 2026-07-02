@@ -21,7 +21,7 @@ tools/abap zcl_demo.abap --test --atc --doc   # build, then ABAP Unit + ATC + AB
 
 Beyond the tool, this repo carries the field notes from a real ABAP vibe-coding lab — the *how* and the *gotchas* of building ABAP entirely over ADT REST:
 
-- **[📊 Live visual guide →](https://seokwonsap.github.io/adt-build/guide.html)** — diagrams for the build flow, verify loop, object-type map, and top-10 gotchas. ([source](docs/guide.html))
+- **[📊 Live visual guide →](https://seokwonsap.github.io/adt-build/)** — diagrams for the build flow, verify loop, object-type map, and top-10 gotchas. ([source](docs/index.html))
 - **[docs/PLAYBOOK.md](docs/PLAYBOOK.md)** — the operating manual: connectivity, the exact build recipe, the verify loop, per-type media types, and a proven-technique catalog.
 - **[docs/LEARNINGS.md](docs/LEARNINGS.md)** — the *symptom → cause → fix* catalog (dozens of entries, grouped A–P): VSP mechanics, RAP, OData V4, ABAP Unit, classic ABAP, DDIC, and a reusable utility library.
 

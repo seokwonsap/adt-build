@@ -184,6 +184,6 @@ curl -s -u "$SAP_USER:$SAP_PASSWORD" \
 ## 9. 관련 문서 (이 repo)
 
 - [`LEARNINGS.md`](LEARNINGS.md) — 함정/오류 카탈로그 (symptom → cause → fix, 핵심 deliverable)
-- [`guide.html`](guide.html) — 다이어그램 있는 시각 가이드 (브라우저로 열기)
+- [시각 가이드 (라이브)](https://seokwonsap.github.io/adt-build/) — 다이어그램 있는 HTML 가이드
 - [`../README.md`](../README.md) · [`../REFERENCE.md`](../REFERENCE.md) — `abap` CLI 사용법·플래그·타입 레퍼런스
 - `../tools/abap` — **주력 빌더** (한 명령, 타입·이름 자동추론, 16종: class·prog·cds·tabl·doma·dtel·intf·fugr·fm·stru·typegrp·xslt·dcl·bdef·srvd·srvb; Python·urllib, 의존성 0). `../tools/build.sh <type> <NAME> [src]` — 동일 플로우의 bash 엔진/폴백. 소스형은 `source/main`에 텍스트 PUT, 객체 XML형(doma/dtel)은 객체 URI에 XML PUT. 새 타입 추가는 `tools/abap` 의 Python `TYPES` 레지스트리(dict)에 endpoint·media type·create 빌더를 추가.

@@ -24,7 +24,7 @@ tools/abap zcl_demo.abap --test --atc --doc   # 빌드 후 ABAP Unit + ATC + ABA
 
 도구뿐 아니라, 실제 ABAP 바이브코딩 랩의 현장 노트 — ADT REST만으로 ABAP을 짓는 *방법*과 *함정* — 을 함께 담았습니다.
 
-- **[📊 라이브 시각 가이드 →](https://seokwonsap.github.io/adt-build/guide.html)** — 빌드 플로우·검증 루프·오브젝트 타입 맵·주요 함정 10선 다이어그램. ([소스](docs/guide.html))
+- **[📊 라이브 시각 가이드 →](https://seokwonsap.github.io/adt-build/)** — 빌드 플로우·검증 루프·오브젝트 타입 맵·주요 함정 10선 다이어그램. ([소스](docs/index.html))
 - **[docs/PLAYBOOK.md](docs/PLAYBOOK.md)** — 운영 매뉴얼: 연결·정확한 빌드 레시피·검증 루프·타입별 media type·검증된 기법 카탈로그.
 - **[docs/LEARNINGS.md](docs/LEARNINGS.md)** — *symptom → cause → fix* 카탈로그(A–P 수십 건): VSP 메커닉·RAP·OData V4·ABAP Unit·클래식 ABAP·DDIC·재사용 유틸 라이브러리.
 
